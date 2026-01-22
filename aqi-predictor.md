@@ -16,7 +16,7 @@ This project covers an end-to-end machine learning workflow, including automated
 - Hopsworks 
 - GitHub Actions
 - Streamlit  
-- Flask
+- FastAPI
 - OpenWeatherMap's Air Pollution API and Open-Meteo's Historical Weather API
 - SHAP  
 - Git  
