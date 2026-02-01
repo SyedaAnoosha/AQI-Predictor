@@ -4,13 +4,16 @@ from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Add parent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from backend.api_client import fetch_historical_weather, fetch_historical_aqi
+from backend.api_client import (
+    fetch_historical_weather, 
+    fetch_historical_aqi,
+    fetch_weather_forecast,
+    fetch_aqi_forecast
+)
 from features.feature_engineering import process_features
 from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
 
@@ -24,35 +27,56 @@ def get_today_date() -> str:
 
 def run_feature_pipeline():
     try:
-        latitude = float(os.getenv("LATITUDE", 25.3792))
-        longitude = float(os.getenv("LONGITUDE", 68.3683))
-        timezone = os.getenv("TIMEZONE", "Asia/Karachi")
+        latitude = 25.3792
+        longitude = 68.3683
+        timezone = "Asia/Karachi"
         hopsworks_api_key = os.getenv("HOPSWORKS_API_KEY")
         hopsworks_project = os.getenv("HOPSWORKS_PROJECT")
         
         if not hopsworks_api_key:
             raise ValueError("HOPSWORKS_API_KEY not set in environment")
         
-        end_date = datetime.now() - timedelta(days=1)
-        start_date = end_date - timedelta(hours=72)
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
+        yesterday = datetime.now() - timedelta(days=1)
+        two_years_ago = yesterday - timedelta(days=730)
         
-        weather_df = fetch_historical_weather(
-            start_date=start_str,
-            end_date=end_str,
+        historical_start = two_years_ago.strftime("%Y-%m-%d")
+        historical_end = yesterday.strftime("%Y-%m-%d")
+        
+        historical_weather = fetch_historical_weather(
+            start_date=historical_start,
+            end_date=historical_end,
             latitude=latitude,
             longitude=longitude,
             timezone=timezone
         )
         
-        aqi_df = fetch_historical_aqi(
-            start_date=start_str,
-            end_date=end_str,
+        historical_aqi = fetch_historical_aqi(
+            start_date=historical_start,
+            end_date=historical_end,
             latitude=latitude,
             longitude=longitude,
             timezone=timezone
         )
+        
+        forecast_weather = fetch_weather_forecast(
+            days=5,
+            latitude=latitude,
+            longitude=longitude,
+            timezone=timezone
+        )
+        
+        forecast_aqi = fetch_aqi_forecast(
+            days=5,
+            latitude=latitude,
+            longitude=longitude,
+            timezone=timezone
+        )
+        
+        weather_df = pd.concat([historical_weather, forecast_weather], ignore_index=True)
+        aqi_df = pd.concat([historical_aqi, forecast_aqi], ignore_index=True)
+        
+        weather_df = weather_df.drop_duplicates(subset=['time'], keep='first')
+        aqi_df = aqi_df.drop_duplicates(subset=['time'], keep='first')
         
         combined_df = pd.merge(weather_df, aqi_df, on='time', how='inner')
         
@@ -69,11 +93,18 @@ def run_feature_pipeline():
         if features_df.isnull().sum().sum() > 0:
             features_df = features_df.dropna()
         
-        cutoff_time = pd.Timestamp(end_date - timedelta(hours=24)).tz_localize('UTC')
-        recent_df = features_df[features_df['time'] >= cutoff_time].copy()
-        
-        if len(recent_df) == 0:
+        if len(features_df) == 0:
             return True
+        
+        float32_cols = [
+            'pm10', 'pm2_5', 'nitrogen_dioxide', 'sulphur_dioxide', 'aqi',
+            'pm2_5_lag_1h', 'pm2_5_lag_3h', 'pm2_5_lag_6h', 'pm2_5_lag_12h', 'pm2_5_lag_24h',
+            'aqi_change_1h', 'aqi_change_3h', 'aqi_change_6h', 'aqi_change_24h',
+            'aqi_rate_1h', 'aqi_rate_3h', 'aqi_rate_24h'
+        ]
+        for col in float32_cols:
+            if col in features_df.columns:
+                features_df[col] = features_df[col].astype('float32')
         
         project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
         
@@ -83,7 +114,7 @@ def run_feature_pipeline():
             version=1,
         )
         
-        insert_features(fg, recent_df)
+        insert_features(fg, features_df)
         
         return True
         

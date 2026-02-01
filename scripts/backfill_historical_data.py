@@ -12,7 +12,6 @@ from src.backend.hopsworks_client import connect_hopsworks, create_feature_group
 
 load_dotenv()
 
-
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--start-date', type=str, default=(datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d'), help='Start date (YYYY-MM-DD)')
@@ -20,21 +19,18 @@ def parse_arguments():
     parser.add_argument('--batch-days', type=int, default=90, help='Days per batch (default: 90)')
     return parser.parse_args()
 
-
 def fetch_data_batch(start_date: str, end_date: str, latitude: float, longitude: float, timezone: str) -> pd.DataFrame:
     weather_df = fetch_historical_weather(start_date=start_date, end_date=end_date, latitude=latitude, longitude=longitude, timezone=timezone)
     aqi_df = fetch_historical_aqi(start_date=start_date, end_date=end_date, latitude=latitude, longitude=longitude, timezone=timezone)
     merged_df = pd.merge(weather_df, aqi_df, on='time', how='inner')
     return merged_df
 
-
 def main():
     args = parse_arguments()
       
-    LATITUDE = float(os.getenv('LATITUDE', 25.3792))
-    LONGITUDE = float(os.getenv('LONGITUDE', 68.3683))
-    TIMEZONE = os.getenv('TIMEZONE', 'Asia/Karachi')
-    LOCATION_NAME = os.getenv('LOCATION_NAME', 'Hyderabad_Sindh')
+    LATITUDE = 25.3792
+    LONGITUDE = 68.3683
+    TIMEZONE = 'Asia/Karachi'
     HOPSWORKS_API_KEY = os.getenv('HOPSWORKS_API_KEY')
     HOPSWORKS_PROJECT = os.getenv('HOPSWORKS_PROJECT')
     
@@ -86,7 +82,6 @@ def main():
             insert_features(fg, features_df)
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     main()
