@@ -81,7 +81,6 @@ def run_feature_pipeline():
             fs,
             name="aqi_features",
             version=1,
-            description="Combined AQI and weather features with lags (automated pipeline)"
         )
         
         insert_features(fg, recent_df)

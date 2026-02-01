@@ -292,7 +292,6 @@ def register_models_to_hopsworks(project, best_model_name, all_models_metrics, f
                 model_meta = model_module.create_model(
                     name=model_name.lower().replace(' ', '_'),
                     metrics={k: float(v) for k, v in metrics.items()},
-                    description=f"AQI Prediction - {model_name}"
                 )
                 model_dir = os.path.join(os.path.dirname(__file__), '../../models')
                 model_meta.save(model_dir)

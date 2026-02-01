@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 # Create FastAPI app
 app = FastAPI(
     title="AQI Predictor API",
-    description="Air Quality Index prediction service for Hyderabad, Sindh",
     version="1.0.0"
 )
 
