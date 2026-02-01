@@ -2,9 +2,8 @@ name: Model Training Pipeline
 
 on:
   schedule:
-    # Run daily at 02:00 UTC
-    - cron: '0 2 * * *'
-  workflow_dispatch:  # Manual trigger
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   training-pipeline:
@@ -12,15 +11,15 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -33,7 +32,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Restore cached model artifacts
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: models/cache/
           key: model-cache-${{ github.run_id }}
@@ -53,7 +52,7 @@ jobs:
           python -m train.training_pipeline
 
       - name: Cache model artifacts for next run
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         if: always()
         with:
           path: models/cache/
@@ -62,11 +61,10 @@ jobs:
       - name: Evaluate model performance
         run: |
           echo "Model training completed"
-          # Could add model evaluation metrics here
 
       - name: Upload model artifacts
         if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: trained-models
           path: |
