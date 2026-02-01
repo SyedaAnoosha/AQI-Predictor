@@ -5,5 +5,8 @@ __pycache__/
 __init__.py
 .cache.*
 
-models/
+models/*.json
+models/cache/*.json
+models/*.pkl
+
 *.csv 
