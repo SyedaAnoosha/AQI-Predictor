@@ -1,0 +1,265 @@
+import pandas as pd
+import numpy as np
+from typing import Tuple
+
+def handle_missing_values(df: pd.DataFrame) -> pd.DataFrame:
+    df_clean = df.copy()
+
+    if 'time' in df_clean.columns:
+        df_clean = df_clean.sort_values('time').reset_index(drop=True)
+    
+    weather_vars = ['temperature_2m', 'pressure_msl', 'wind_speed_10m']
+    for var in weather_vars:
+        if var in df_clean.columns:
+            df_clean[var] = df_clean[var].ffill(limit=3)
+            df_clean[var] = df_clean[var].interpolate(method='linear')
+    
+    pollutant_vars = ['pm2_5', 'pm10', 'nitrogen_dioxide', 'sulphur_dioxide', 'carbon_monoxide']
+    for var in pollutant_vars:
+        if var in df_clean.columns:
+            df_clean[var] = df_clean[var].ffill(limit=2)
+            causal_median = df_clean[var].rolling(window=12, min_periods=1).median()
+            df_clean[var] = df_clean[var].fillna(causal_median)
+
+    if 'aqi' in df_clean.columns:
+        df_clean['aqi'] = df_clean['aqi'].ffill(limit=2)
+        aqi_causal_median = df_clean['aqi'].rolling(window=12, min_periods=1).median()
+        df_clean['aqi'] = df_clean['aqi'].fillna(aqi_causal_median)
+    
+    return df_clean
+
+def detect_duplicate_weather(df: pd.DataFrame, threshold: float = 0.01) -> pd.DataFrame:
+    df_dup = df.copy()
+    weather_features = ['temperature_2m', 'pressure_msl', 'wind_speed_10m']
+    is_duplicate = pd.Series(False, index=df_dup.index)
+    
+    for i in range(1, len(df_dup)):
+        diffs = []
+        for feature in weather_features:
+            if feature in df_dup.columns:
+                diff = abs(df_dup[feature].iloc[i] - df_dup[feature].iloc[i-1])
+                feature_range = df_dup[feature].max() - df_dup[feature].min()
+                if feature_range > 0:
+                    diffs.append(diff / feature_range)
+        
+        if len(diffs) > 0 and all(d < threshold for d in diffs):
+            is_duplicate.iloc[i] = True
+    
+    df_dup['is_duplicate'] = is_duplicate
+    return df_dup
+
+def validate_data_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    df_valid = df.copy()
+    
+    if 'aqi' in df_valid.columns:
+        df_valid = df_valid[(df_valid['aqi'] >= 0) & (df_valid['aqi'] <= 600)]
+    
+    if 'temperature_2m' in df_valid.columns:
+        df_valid = df_valid[(df_valid['temperature_2m'] >= -40) & (df_valid['temperature_2m'] <= 60)]
+    
+    if 'pm2_5' in df_valid.columns and 'pm10' in df_valid.columns:
+        df_valid = df_valid[df_valid['pm2_5'] <= df_valid['pm10']]
+    
+    return df_valid
+
+def get_season(month: int) -> str:
+    if month in [12, 1, 2]:
+        return 'winter'
+    elif month in [3, 4, 5]:
+        return 'spring'
+    elif month in [6, 7, 8]:
+        return 'summer'
+    else:
+        return 'fall'
+
+def extract_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    df_time = df.copy()
+    
+    if not pd.api.types.is_datetime64_any_dtype(df_time['time']):
+        df_time['time'] = pd.to_datetime(df_time['time'])
+    
+    df_time['hour'] = df_time['time'].dt.hour
+    df_time['day_of_week'] = df_time['time'].dt.dayofweek
+    df_time['day_of_month'] = df_time['time'].dt.day
+    df_time['month'] = df_time['time'].dt.month
+    df_time['quarter'] = df_time['time'].dt.quarter
+    df_time['week_of_year'] = df_time['time'].dt.isocalendar().week
+    df_time['is_weekend'] = (df_time['day_of_week'] >= 5).astype(int)
+    df_time['is_daytime'] = ((df_time['hour'] >= 6) & (df_time['hour'] < 18)).astype(int)
+    df_time['season'] = df_time['month'].apply(get_season)
+    
+    return df_time
+
+def create_cyclical_features(df: pd.DataFrame) -> pd.DataFrame:
+    df_cyc = df.copy()
+    
+    if 'hour' in df_cyc.columns:
+        df_cyc['hour_sin'] = np.sin(2 * np.pi * df_cyc['hour'] / 24)
+        df_cyc['hour_cos'] = np.cos(2 * np.pi * df_cyc['hour'] / 24)
+    
+    if 'day_of_week' in df_cyc.columns:
+        df_cyc['day_of_week_sin'] = np.sin(2 * np.pi * df_cyc['day_of_week'] / 7)
+        df_cyc['day_of_week_cos'] = np.cos(2 * np.pi * df_cyc['day_of_week'] / 7)
+    
+    if 'month' in df_cyc.columns:
+        df_cyc['month_sin'] = np.sin(2 * np.pi * df_cyc['month'] / 12)
+        df_cyc['month_cos'] = np.cos(2 * np.pi * df_cyc['month'] / 12)
+    
+    return df_cyc
+
+def create_lag_features(df: pd.DataFrame, lags: list = None) -> pd.DataFrame:
+    """Create lag features for time series prediction (pm2_5 and carbon_monoxide)."""
+    df_lagged = df.copy()
+    
+    if 'pm2_5' in df_lagged.columns:
+        for lag in [1, 3, 6, 12, 24]:
+            df_lagged[f'pm2_5_lag_{lag}h'] = df_lagged['pm2_5'].shift(lag)
+    
+    if 'carbon_monoxide' in df_lagged.columns:
+        for lag in [1, 3, 6, 12, 24]:
+            df_lagged[f'carbon_monoxide_lag_{lag}h'] = df_lagged['carbon_monoxide'].shift(lag)
+    
+    return df_lagged
+
+def create_aqi_change_rate_features(df: pd.DataFrame) -> pd.DataFrame:
+    df_aqi_change = df.copy()
+    
+    if 'aqi' not in df_aqi_change.columns:
+        return df_aqi_change
+    
+    df_aqi_change['aqi_change_1h'] = df_aqi_change['aqi'] - df_aqi_change['aqi'].shift(1)
+    df_aqi_change['aqi_change_3h'] = df_aqi_change['aqi'] - df_aqi_change['aqi'].shift(3)
+    df_aqi_change['aqi_change_6h'] = df_aqi_change['aqi'] - df_aqi_change['aqi'].shift(6)
+    df_aqi_change['aqi_change_24h'] = df_aqi_change['aqi'] - df_aqi_change['aqi'].shift(24)
+    
+    df_aqi_change['aqi_rate_1h'] = df_aqi_change['aqi_change_1h'] / 1.0
+    df_aqi_change['aqi_rate_3h'] = df_aqi_change['aqi_change_3h'] / 3.0
+    df_aqi_change['aqi_rate_24h'] = df_aqi_change['aqi_change_24h'] / 24.0
+    
+    for col in ['aqi_rate_1h', 'aqi_rate_3h', 'aqi_rate_24h']:
+        df_aqi_change[col] = df_aqi_change[col].fillna(0).clip(-10, 10)
+    
+    return df_aqi_change
+
+def create_rate_of_change_features(df: pd.DataFrame, include_aqi_rate: bool = False) -> pd.DataFrame:
+    df_rate = df.copy()
+    
+    if include_aqi_rate and 'aqi' in df_rate.columns:
+        df_rate['aqi_change_1h'] = df_rate['aqi'] - df_rate['aqi'].shift(1)
+        df_rate['aqi_change_3h'] = df_rate['aqi'] - df_rate['aqi'].shift(3)
+        df_rate['aqi_change_24h'] = df_rate['aqi'] - df_rate['aqi'].shift(24)
+        
+        df_rate['aqi_pct_change_1h'] = df_rate['aqi'].pct_change(periods=1).fillna(0).clip(-1, 1)
+        df_rate['aqi_pct_change_24h'] = df_rate['aqi'].pct_change(periods=24).fillna(0).clip(-1, 1)
+    
+    return df_rate
+
+def create_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
+    df_inter = df.copy()
+    
+    if 'temperature_2m' in df_inter.columns and 'relative_humidity_2m' in df_inter.columns:
+        df_inter['temp_humidity_interaction'] = (
+            df_inter['temperature_2m'] * df_inter['relative_humidity_2m'] / 100
+        )
+    
+    if 'wind_speed_10m' in df_inter.columns and 'pressure_msl' in df_inter.columns:
+        df_inter['wind_pressure_interaction'] = (
+            df_inter['wind_speed_10m'] * df_inter['pressure_msl'] / 1000
+        )
+    
+    return df_inter
+
+def process_features(
+    df: pd.DataFrame,
+    include_lags: bool = True,
+    include_aqi_rate: bool = False,
+    include_aqi_change_rate: bool = True
+) -> pd.DataFrame:
+    df = handle_missing_values(df)
+    df = detect_duplicate_weather(df)
+    df = validate_data_ranges(df)
+    
+    df = extract_time_features(df)
+    df = create_cyclical_features(df)
+    
+    if include_lags:
+        df = create_lag_features(df)
+    
+    if include_aqi_change_rate:
+        df = create_aqi_change_rate_features(df)
+    
+    if include_aqi_rate:
+        df = create_rate_of_change_features(df, include_aqi_rate=False)
+    
+    df = create_interaction_features(df)
+    
+    if include_lags or include_aqi_change_rate:
+        df = df.dropna()
+    
+    return df
+
+def prepare_for_training(df: pd.DataFrame, target_col: str = 'aqi') -> Tuple[pd.DataFrame, pd.Series]:
+    df_model = df.copy()
+    
+    if 'time' in df_model.columns:
+        df_model = df_model.drop('time', axis=1)
+    
+    # Remove ALL same-hour pollutants (data leakage prevention)
+    same_hour_pollutants = ['pm2_5', 'pm10', 'carbon_monoxide', 'nitrogen_dioxide', 'sulphur_dioxide']
+    cols_to_remove = [col for col in same_hour_pollutants if col in df_model.columns]
+    
+    if 'pm2_5_pm10_ratio' in df_model.columns:
+        cols_to_remove.append('pm2_5_pm10_ratio')
+    
+    if 'is_duplicate' in df_model.columns:
+        cols_to_remove.append('is_duplicate')
+    
+    if cols_to_remove:
+        df_model = df_model.drop(columns=cols_to_remove)
+    
+    if 'season' in df_model.columns:
+        season_map = {'winter': 0, 'spring': 1, 'summer': 2, 'fall': 3}
+        df_model['season'] = df_model['season'].map(season_map)
+        df_model = pd.get_dummies(df_model, columns=['season'], prefix='season', drop_first=False)
+        
+        for i in range(4):
+            col_name = f'season_{i}'
+            if col_name not in df_model.columns:
+                df_model[col_name] = 0
+    
+    y = df_model[target_col]
+    X = df_model.drop(target_col, axis=1)
+    
+    return X, y
+
+def prepare_for_prediction(df: pd.DataFrame) -> pd.DataFrame:
+    df_pred = df.copy()
+    
+    cols_to_drop = [col for col in ['time', 'aqi'] if col in df_pred.columns]
+    if cols_to_drop:
+        df_pred = df_pred.drop(columns=cols_to_drop)
+    
+    # Remove ALL same-hour pollutants (data leakage prevention)
+    same_hour_pollutants = ['pm2_5', 'pm10', 'carbon_monoxide', 'nitrogen_dioxide', 'sulphur_dioxide']
+    cols_to_remove = [col for col in same_hour_pollutants if col in df_pred.columns]
+    
+    if 'pm2_5_pm10_ratio' in df_pred.columns:
+        cols_to_remove.append('pm2_5_pm10_ratio')
+    
+    if 'is_duplicate' in df_pred.columns:
+        cols_to_remove.append('is_duplicate')
+    
+    if cols_to_remove:
+        df_pred = df_pred.drop(columns=cols_to_remove)
+    
+    if 'season' in df_pred.columns:
+        season_map = {'winter': 0, 'spring': 1, 'summer': 2, 'fall': 3}
+        df_pred['season'] = df_pred['season'].map(season_map)
+        df_pred = pd.get_dummies(df_pred, columns=['season'], prefix='season', drop_first=False)
+        
+        for i in range(4):
+            col_name = f'season_{i}'
+            if col_name not in df_pred.columns:
+                df_pred[col_name] = 0
+    
+    return df_pred

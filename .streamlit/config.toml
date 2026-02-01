@@ -1,0 +1,17 @@
+[theme]
+base = "light"
+primaryColor = "#1f7a8c"
+backgroundColor = "#f7f9fc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+font = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+baseFontSize = 16
+baseFontWeight = 500
+
+[theme.sidebar]
+backgroundColor = "#eef3fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+primaryColor = "#1f7a8c"

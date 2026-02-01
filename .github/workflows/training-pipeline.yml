@@ -32,6 +32,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore cached model artifacts
+        uses: actions/cache@v3
+        with:
+          path: models/cache/
+          key: model-cache-${{ github.run_id }}
+          restore-keys: |
+            model-cache-
+
       - name: Create .env file
         run: |
           echo "HOPSWORKS_API_KEY=${{ secrets.HOPSWORKS_API_KEY }}" > .env
@@ -44,6 +52,13 @@ jobs:
           cd src
           python -m train.training_pipeline
 
+      - name: Cache model artifacts for next run
+        uses: actions/cache/save@v3
+        if: always()
+        with:
+          path: models/cache/
+          key: model-cache-${{ github.run_id }}
+
       - name: Evaluate model performance
         run: |
           echo "Model training completed"
@@ -55,14 +70,13 @@ jobs:
         with:
           name: trained-models
           path: |
-            src/models/
+            models/
           retention-days: 30
 
       - name: Send success notification
         if: success()
         run: |
           echo "Training pipeline completed successfully"
-          # Could add email/Slack notification here
 
       - name: Send failure notification
         if: failure()
