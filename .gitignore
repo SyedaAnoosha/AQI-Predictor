@@ -5,6 +5,7 @@ __pycache__/
 __init__.py
 .cache.*
 
+# Model files (excluded from git, but GitHub Actions artifacts can include them)
 models/*.json
-models/cache/*.json
+models/cache/
 models/*.pkl
