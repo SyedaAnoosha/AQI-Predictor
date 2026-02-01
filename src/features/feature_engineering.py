@@ -84,8 +84,8 @@ def extract_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df_time['month'] = df_time['time'].dt.month
     df_time['quarter'] = df_time['time'].dt.quarter
     df_time['week_of_year'] = df_time['time'].dt.isocalendar().week
-    df_time['is_weekend'] = (df_time['day_of_week'] >= 5).astype(int)
-    df_time['is_daytime'] = ((df_time['hour'] >= 6) & (df_time['hour'] < 18)).astype(int)
+    df_time['is_weekend'] = (df_time['day_of_week'] >= 5).astype('int32')
+    df_time['is_daytime'] = ((df_time['hour'] >= 6) & (df_time['hour'] < 18)).astype('int32')
     df_time['season'] = df_time['month'].apply(get_season)
     
     return df_time
