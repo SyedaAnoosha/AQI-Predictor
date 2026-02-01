@@ -20,4 +20,4 @@ uvicorn
 pydantic
 lightgbm
 keras
-
+hopsworks[python]
