@@ -53,13 +53,3 @@ jobs:
         run: |
           echo "Feature pipeline failed at $(date)"
           exit 1
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feature-pipeline-logs
-          path: |
-            logs/
-            feature_pipeline.log
-          retention-days: 30
