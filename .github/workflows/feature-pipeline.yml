@@ -41,7 +41,7 @@ jobs:
       - name: Run feature pipeline
         run: |
           cd src
-          python -m backend.feature_pipeline
+          python -m features.feature_pipeline
 
       - name: Send success notification
         if: success()
