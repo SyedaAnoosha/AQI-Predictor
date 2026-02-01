@@ -8,5 +8,3 @@ __init__.py
 models/*.json
 models/cache/*.json
 models/*.pkl
-
-*.csv 
