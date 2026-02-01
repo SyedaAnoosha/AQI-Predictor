@@ -61,15 +61,18 @@ jobs:
       - name: Evaluate model performance
         run: |
           echo "Model training completed"
+          echo "Checking generated files:"
+          ls -la models/ || echo "models/ directory not found"
+          ls -la models/cache/ || echo "models/cache/ directory not found"
 
       - name: Upload model artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: trained-models
-          path: |
-            models/
+          path: models/
           retention-days: 30
+          include-hidden-files: true
 
       - name: Send success notification
         if: success()
