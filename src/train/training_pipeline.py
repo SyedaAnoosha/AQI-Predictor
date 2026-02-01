@@ -310,9 +310,17 @@ def run_training_and_inference():
     HOPSWORKS_PROJECT = os.getenv('HOPSWORKS_PROJECT')
 
     if not HOPSWORKS_API_KEY or not HOPSWORKS_PROJECT:
+        print("ERROR: HOPSWORKS_API_KEY or HOPSWORKS_PROJECT not set")
         return
 
-    X, y, df, project = load_data_from_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
+    try:
+        X, y, df, project = load_data_from_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
+    except Exception as e:
+        print(f"ERROR loading data from Hopsworks: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
     X_train, X_val, X_test, y_train, y_val, y_test, tscv = create_time_series_splits(X, y, n_splits=5)
 
     pollutant_patterns = ['pm2_5', 'pm10', 'carbon_monoxide', 'sulphur_dioxide', 'nitrogen_dioxide']
@@ -339,14 +347,19 @@ def run_training_and_inference():
     models = {}
     metrics = {}
 
+    print("Training Random Forest...")
     rf_model, rf_metrics = train_random_forest(X_train, y_train, X_val, y_val)
     models['Random Forest'] = rf_model
     metrics['Random Forest'] = rf_metrics
+    print(f"Random Forest RMSE: {rf_metrics['rmse']:.2f}")
 
+    print("Training XGBoost...")
     xgb_model, xgb_metrics = train_xgboost(X_train, y_train, X_val, y_val)
     models['XGBoost'] = xgb_model
     metrics['XGBoost'] = xgb_metrics
+    print(f"XGBoost RMSE: {xgb_metrics['rmse']:.2f}")
 
+    print("Training LightGBM...")
     lgb_model, lgb_metrics = train_lightgbm(X_train, y_train, X_val, y_val)
     models['LightGBM'] = lgb_model
     metrics['LightGBM'] = lgb_metrics
@@ -417,9 +430,17 @@ def run_training_and_inference():
             'test_r2': float(test_metrics_all[model_name]['r2']),
         }
 
-    save_model_artifacts(best_model, save_scaler, list(X_train.columns),
-                        all_models_metrics[best_model_name], best_model_name)
+    print(f"Saving model artifacts for best model: {best_model_name}")
+    try:
+        save_model_artifacts(best_model, save_scaler, list(X_train.columns),
+                            all_models_metrics[best_model_name], best_model_name)
+        print("Model artifacts saved successfully")
+    except Exception as e:
+        print(f"ERROR saving model artifacts: {e}")
+        import traceback
+        traceback.print_exc()
 
+    print("Registering models to Hopsworks...")
     register_models_to_hopsworks(project, best_model_name, all_models_metrics, list(X_train.columns))
 
     best_artifacts = {
@@ -429,6 +450,7 @@ def run_training_and_inference():
     }
 
     prediction_response = None
+    print("Generating 72h forecast...")
     try:
         prediction_response = generate_forecast(
             best_artifacts,
@@ -437,10 +459,20 @@ def run_training_and_inference():
             longitude=LONGITUDE,
             timezone=TIMEZONE
         )
-    except Exception:
-        pass
+        print("Forecast generated successfully")
+    except Exception as e:
+        print(f"ERROR generating forecast: {e}")
+        import traceback
+        traceback.print_exc()
 
-    cache_daily_outputs(best_model_name, all_models_metrics, prediction_response)
+    print("Caching outputs...")
+    try:
+        cache_daily_outputs(best_model_name, all_models_metrics, prediction_response)
+        print(f"Cache files saved to {CACHE_DIR}")
+    except Exception as e:
+        print(f"ERROR caching outputs: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     run_training_and_inference()
