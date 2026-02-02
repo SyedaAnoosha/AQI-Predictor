@@ -223,13 +223,21 @@ def load_model_metadata(mr, model_name: str = "lightgbm_aqi_predictor"):
 
 def get_all_model_metrics(mr) -> dict:
     """Fetch metrics for all five models from Hopsworks registry."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         all_metrics = {}
         model_names = ["lightgbm", "xgboost", "random_forest", "elasticnet", "tensorflow_nn"]
         
+        logger.info(f"Attempting to fetch metrics from Hopsworks for models: {model_names}")
+        
         for model_name in model_names:
             try:
+                logger.info(f"Fetching metrics for model: {model_name}")
                 candidates = mr.get_models(name=model_name)
+                logger.info(f"Found {len(candidates) if candidates else 0} candidates for {model_name}")
+                
                 if candidates:
                     latest = sorted(
                         candidates,
@@ -239,6 +247,7 @@ def get_all_model_metrics(mr) -> dict:
                     
                     metrics = {}
                     raw_metrics = getattr(latest, "metrics", None) or getattr(latest, "model_metrics", None) or {}
+                    logger.info(f"Raw metrics for {model_name}: {raw_metrics}")
                     
                     if isinstance(raw_metrics, dict):
                         for key, val in raw_metrics.items():
@@ -249,10 +258,15 @@ def get_all_model_metrics(mr) -> dict:
                     
                     if metrics:
                         all_metrics[model_name] = metrics
-            except Exception:
-                pass
+                        logger.info(f"Successfully extracted metrics for {model_name}: {list(metrics.keys())}")
+                    else:
+                        logger.warning(f"No metrics found for {model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch {model_name}: {str(e)}")
         
+        logger.info(f"Total models with metrics: {len(all_metrics)}, models: {list(all_metrics.keys())}")
         return all_metrics
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error in get_all_model_metrics: {str(e)}")
         return {}
 
