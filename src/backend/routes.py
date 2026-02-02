@@ -18,6 +18,9 @@ from backend.services import (
     get_feature_importance, get_historical_data, get_model_metrics,
     get_current_aqi, get_shap_values
 )
+from backend.hopsworks_client import (
+    connect_hopsworks, get_all_model_metrics
+)
 from backend.schemas import (
     PredictionResponse, AlertResponse
 )
@@ -356,18 +359,38 @@ async def get_model_metrics_endpoint(model: str = Query(DEFAULT_MODEL, descripti
     summary="Get metrics for all loaded models",
     tags=["Model Info"]
 )
-async def get_all_model_metrics():
-    cached = _load_cached_metrics()
+async def get_all_model_metrics_endpoint():
+    try:
+        if not HOPSWORKS_API_KEY:
+            logger.warning("Hopsworks API key not set, falling back to cache")
+            cached = _load_cached_metrics()
+            metrics_payload = cached if cached else {}
+        else:
+            try:
+                project, fs = connect_hopsworks(HOPSWORKS_API_KEY)
+                mr = project.get_model_registry()
+                metrics_payload = get_all_model_metrics(mr)
+                if not metrics_payload:
+                    metrics_payload = _load_cached_metrics()
+            except Exception as e:
+                logger.warning(f"Could not fetch from Hopsworks: {e}, falling back to cache")
+                metrics_payload = _load_cached_metrics()
+        
+        available = list(metrics_payload.keys()) if metrics_payload else AVAILABLE_MODELS
 
-    metrics_payload = cached if cached else {DEFAULT_MODEL: get_model_metrics(MODEL_CACHE[DEFAULT_MODEL]) if MODEL_CACHE else {}}
-
-    available = list(metrics_payload.keys()) if metrics_payload else AVAILABLE_MODELS
-
-    return {
-        "default_model": DEFAULT_MODEL,
-        "available_models": available,
-        "metrics": metrics_payload
-    }
+        return {
+            "default_model": DEFAULT_MODEL,
+            "available_models": available,
+            "metrics": metrics_payload
+        }
+    except Exception as e:
+        logger.error(f"Error fetching all model metrics: {str(e)}")
+        cached = _load_cached_metrics()
+        return {
+            "default_model": DEFAULT_MODEL,
+            "available_models": list(cached.keys()) if cached else AVAILABLE_MODELS,
+            "metrics": cached
+        }
 
 @router.get(
     "/models",

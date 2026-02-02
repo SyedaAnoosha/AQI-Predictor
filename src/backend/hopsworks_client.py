@@ -220,3 +220,39 @@ def load_model_metadata(mr, model_name: str = "lightgbm_aqi_predictor"):
     except Exception as e:
         raise
 
+
+def get_all_model_metrics(mr) -> dict:
+    """Fetch metrics for all five models from Hopsworks registry."""
+    try:
+        all_metrics = {}
+        model_names = ["lightgbm", "xgboost", "random_forest", "elasticnet", "tensorflow_nn"]
+        
+        for model_name in model_names:
+            try:
+                candidates = mr.get_models(model_name=model_name)
+                if candidates:
+                    latest = sorted(
+                        candidates,
+                        key=lambda m: getattr(m, "version", 0),
+                        reverse=True
+                    )[0]
+                    
+                    metrics = {}
+                    raw_metrics = getattr(latest, "metrics", None) or getattr(latest, "model_metrics", None) or {}
+                    
+                    if isinstance(raw_metrics, dict):
+                        for key, val in raw_metrics.items():
+                            try:
+                                metrics[key] = float(val) if isinstance(val, (int, float)) else val
+                            except (ValueError, TypeError):
+                                metrics[key] = val
+                    
+                    if metrics:
+                        all_metrics[model_name] = metrics
+            except Exception:
+                pass
+        
+        return all_metrics
+    except Exception:
+        return {}
+
