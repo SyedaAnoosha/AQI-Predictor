@@ -1061,9 +1061,9 @@ def render_model_info(selected_model: str):
             template='plotly_white'
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
-        st.dataframe(df_features, use_container_width=True)
+        st.dataframe(df_features, width='stretch')
         
     else:
         st.warning("⚠️ SHAP values unavailable, showing regular feature importance")
@@ -1096,9 +1096,9 @@ def render_model_info(selected_model: str):
                 template='plotly_white'
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
-            st.dataframe(df_features, use_container_width=True)
+            st.dataframe(df_features, width='stretch')
         else:
             st.warning("Feature importance data unavailable")
     
