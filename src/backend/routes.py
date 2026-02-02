@@ -412,6 +412,36 @@ async def list_models():
     }
 
 @router.get(
+    "/debug/metrics",
+    summary="Debug: Raw metrics from all sources",
+    tags=["Debug"]
+)
+async def debug_metrics():
+    """Debug endpoint showing metrics from all sources"""
+    cached = _load_cached_metrics()
+    hopsworks_metrics = {}
+    
+    if HOPSWORKS_API_KEY:
+        try:
+            project, fs = connect_hopsworks(HOPSWORKS_API_KEY)
+            mr = project.get_model_registry()
+            hopsworks_metrics = get_all_model_metrics(mr)
+            logger.info(f"DEBUG: Hopsworks returned {len(hopsworks_metrics)} models")
+        except Exception as e:
+            logger.error(f"DEBUG: Hopsworks fetch failed: {str(e)}")
+    
+    return {
+        "hopsworks_api_key_set": bool(HOPSWORKS_API_KEY),
+        "hopsworks_metrics_count": len(hopsworks_metrics),
+        "hopsworks_metrics_models": list(hopsworks_metrics.keys()),
+        "cached_metrics_count": len(cached),
+        "cached_metrics_models": list(cached.keys()),
+        "default_model": DEFAULT_MODEL,
+        "all_hopsworks_models": hopsworks_metrics,
+        "all_cached_models": cached
+    }
+
+@router.get(
     "/current-aqi",
     summary="Get current AQI",
     tags=["Current Data"]
