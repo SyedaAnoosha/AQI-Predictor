@@ -19,4 +19,5 @@ uvicorn
 pydantic
 lightgbm
 keras
-hopsworks[python]==4.2.*
+hopsworks[python]
+hopsworks===4.2.*
