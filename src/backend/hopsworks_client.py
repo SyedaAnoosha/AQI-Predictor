@@ -169,7 +169,7 @@ def load_model_from_registry(
 
         if model is None:
             try:
-                candidates = mr.get_models(model_name=model_name)
+                candidates = mr.get_models(name=model_name)
                 if candidates:
                     candidates = sorted(
                         candidates,
@@ -223,18 +223,13 @@ def load_model_metadata(mr, model_name: str = "lightgbm_aqi_predictor"):
 
 def get_all_model_metrics(mr) -> dict:
     """Fetch metrics for all five models from Hopsworks registry."""
-    import logging
-    logger = logging.getLogger(__name__)
-    
     try:
         all_metrics = {}
         model_names = ["lightgbm", "xgboost", "random_forest", "elasticnet", "tensorflow_nn"]
         
-        # Try explicit model names first
         for model_name in model_names:
             try:
-                logger.info(f"Fetching metrics for model: {model_name}")
-                candidates = mr.get_models(model_name=model_name)
+                candidates = mr.get_models(name=model_name)
                 if candidates:
                     latest = sorted(
                         candidates,
@@ -245,8 +240,6 @@ def get_all_model_metrics(mr) -> dict:
                     metrics = {}
                     raw_metrics = getattr(latest, "metrics", None) or getattr(latest, "model_metrics", None) or {}
                     
-                    logger.info(f"Raw metrics for {model_name}: {raw_metrics}")
-                    
                     if isinstance(raw_metrics, dict):
                         for key, val in raw_metrics.items():
                             try:
@@ -256,42 +249,10 @@ def get_all_model_metrics(mr) -> dict:
                     
                     if metrics:
                         all_metrics[model_name] = metrics
-                        logger.info(f"Successfully fetched metrics for {model_name}: {list(metrics.keys())}")
-                else:
-                    logger.warning(f"No models found for {model_name}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch {model_name}: {str(e)}")
+            except Exception:
+                pass
         
-        # If we got nothing, try to list all models and extract metrics
-        if not all_metrics:
-            logger.info("Explicit model names didn't work, trying to list all models")
-            try:
-                all_models = mr.get_models()
-                logger.info(f"Found {len(all_models)} total models in registry")
-                for model in all_models:
-                    try:
-                        model_name = getattr(model, "name", "unknown")
-                        metrics = {}
-                        raw_metrics = getattr(model, "metrics", None) or getattr(model, "model_metrics", None) or {}
-                        
-                        if isinstance(raw_metrics, dict):
-                            for key, val in raw_metrics.items():
-                                try:
-                                    metrics[key] = float(val) if isinstance(val, (int, float)) else val
-                                except (ValueError, TypeError):
-                                    metrics[key] = val
-                        
-                        if metrics:
-                            all_metrics[model_name] = metrics
-                            logger.info(f"Found metrics for {model_name}")
-                    except Exception as e:
-                        logger.warning(f"Error processing model: {str(e)}")
-            except Exception as e:
-                logger.error(f"Could not list all models: {str(e)}")
-        
-        logger.info(f"Total models with metrics: {len(all_metrics)}, models: {list(all_metrics.keys())}")
         return all_metrics
-    except Exception as e:
-        logger.error(f"Error in get_all_model_metrics: {str(e)}", exc_info=True)
+    except Exception:
         return {}
 
