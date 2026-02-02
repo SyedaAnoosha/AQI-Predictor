@@ -114,8 +114,17 @@ def run_feature_pipeline():
             version=1,
         )
         
-        insert_features(fg, features_df)
+        batch_size = 1000
+        total_rows = len(features_df)
+        print(f"Uploading {total_rows} rows in batches of {batch_size}")
         
+        for i in range(0, total_rows, batch_size):
+            batch_end = min(i + batch_size, total_rows)
+            batch_df = features_df.iloc[i:batch_end]
+            print(f"Uploading batch {i//batch_size + 1}/{(total_rows + batch_size - 1)//batch_size} ({len(batch_df)} rows)")
+            insert_features(fg, batch_df)
+        
+        print(f"Successfully uploaded all {total_rows} rows")
         return True
         
     except Exception as e:
