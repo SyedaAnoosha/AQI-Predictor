@@ -5,6 +5,8 @@ import plotly.express as px
 from datetime import datetime
 import requests
 import os
+import json
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-API_BASE_URL = os.getenv("API_BASE_URL")
+API_BASE_URL = st.secrets.get("API_BASE_URL", os.getenv("API_BASE_URL", "http://localhost:8000/api"))
 
 st.markdown("""
     <style>
@@ -376,6 +378,26 @@ def fetch_all_model_metrics():
         return response.json()
     except Exception:
         return None
+
+
+def load_local_metrics_cache() -> dict:
+    try:
+        root_dir = Path(__file__).resolve().parents[2]
+        cache_path = root_dir / "models" / "cache" / "all_model_metrics.json"
+        if cache_path.exists():
+            with cache_path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                normalized = {}
+                for name, metrics in raw.items():
+                    if not isinstance(metrics, dict):
+                        continue
+                    key = name.strip().lower().replace(" ", "_")
+                    normalized[key] = metrics
+                return normalized
+    except Exception:
+        return {}
+    return {}
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_forecast(model_name: str):
@@ -960,6 +982,15 @@ def render_model_info(selected_model: str):
     """, unsafe_allow_html=True)
     
     metrics_all = fetch_all_model_metrics()
+    metrics_payload = metrics_all.get("metrics") if metrics_all else None
+    if not metrics_payload or len(metrics_payload) <= 1:
+        local_metrics = load_local_metrics_cache()
+        if local_metrics:
+            if metrics_all is None:
+                metrics_all = {"metrics": local_metrics, "default_model": "lightgbm"}
+            else:
+                metrics_all["metrics"] = local_metrics
+            metrics_payload = local_metrics
 
     col1, col2, col3 = st.columns(3)
     
@@ -967,17 +998,18 @@ def render_model_info(selected_model: str):
         st.metric("Selected Model", selected_model)
     
     with col2:
-        st.metric("Loaded Models", len(metrics_all.get("metrics", {}) ) if metrics_all else 1)
+        st.metric("Loaded Models", len(metrics_payload or {}) if metrics_all else 1)
     
     with col3:
         st.metric("Default Model", metrics_all.get("default_model", "lightgbm") if metrics_all else "lightgbm")
     
-    if metrics_all and metrics_all.get("metrics"):
+    if metrics_all and metrics_payload:
         st.subheader("📈 Model Metrics")
         rows = []
-        for name, m in metrics_all["metrics"].items():
+        for name, m in metrics_payload.items():
+            label = get_model_info(name).get("label", name)
             rows.append({
-                "Model": name,
+                "Model": label,
                 "Train RMSE": pick_metric(m, ["train_rmse", "rmse_train", "rmse_tr"]),
                 "Val RMSE": pick_metric(m, ["val_rmse", "rmse_val", "validation_rmse"]),
                 "Test RMSE": pick_metric(m, ["test_rmse", "rmse"]),
