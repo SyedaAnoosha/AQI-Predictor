@@ -23,4 +23,4 @@ retry_requests
 python-dotenv
 plotly>=5.10.0
 
-hopsworks[python]
+hopsworks[python]==4.2.*
