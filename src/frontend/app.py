@@ -470,27 +470,6 @@ def render_home_page(selected_model: str):
     """, unsafe_allow_html=True)
     
     now = datetime.now()
-    col_fresh1, col_fresh2 = st.columns([3, 1])
-    with col_fresh1:
-        st.caption(f"🕐 Last Updated: {now.strftime('%B %d, %Y at %I:%M %p')}")
-    with col_fresh2:
-        try:
-            import os
-            metrics_path = "models/cache/all_model_metrics.json"
-            if os.path.exists(metrics_path):
-                mod_time = datetime.fromtimestamp(os.path.getmtime(metrics_path))
-                delta = now - mod_time
-                hours_ago = delta.total_seconds() / 3600
-                if hours_ago < 1:
-                    st.caption(f"✅ Model: {int(delta.total_seconds() / 60)} min ago")
-                elif hours_ago < 24:
-                    st.caption(f"✅ Model: {int(hours_ago)} hours ago")
-                else:
-                    st.caption(f"⚠️ Model: {int(hours_ago / 24)} days ago")
-            else:
-                st.caption("ℹ️ Model training pending")
-        except:
-            st.caption("")
     
     st.divider()
     
