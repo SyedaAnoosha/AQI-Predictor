@@ -246,7 +246,13 @@ def get_all_model_metrics(mr) -> dict:
                     )[0]
                     
                     metrics = {}
-                    raw_metrics = getattr(latest, "metrics", None) or getattr(latest, "model_metrics", None) or {}
+                    # Try multiple attribute names where metrics might be stored
+                    raw_metrics = (
+                        getattr(latest, "metrics", None) 
+                        or getattr(latest, "model_metrics", None) 
+                        or getattr(latest, "training_metrics", None)
+                        or {}
+                    )
                     logger.info(f"Raw metrics for {model_name}: {raw_metrics}")
                     
                     if isinstance(raw_metrics, dict):

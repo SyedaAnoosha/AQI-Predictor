@@ -289,16 +289,31 @@ def register_models_to_hopsworks(project, best_model_name, all_models_metrics, f
                 else:
                     model_module = mr.sklearn
                 
+                # Convert all metrics to floats
+                float_metrics = {}
+                for k, v in metrics.items():
+                    try:
+                        float_metrics[k] = float(v)
+                    except (ValueError, TypeError):
+                        pass
+                
+                print(f"Registering {model_name} with metrics: {float_metrics}")
                 model_meta = model_module.create_model(
                     name=model_name.lower().replace(' ', '_'),
-                    metrics={k: float(v) for k, v in metrics.items()},
+                    metrics=float_metrics,
                 )
                 model_dir = os.path.join(os.path.dirname(__file__), '../../models')
                 model_meta.save(model_dir)
-            except Exception:
-                pass
+                print(f"Successfully registered {model_name}")
+            except Exception as e:
+                print(f"ERROR registering {model_name}: {e}")
+                import traceback
+                traceback.print_exc()
         return mr
-    except Exception:
+    except Exception as e:
+        print(f"ERROR in register_models_to_hopsworks: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
