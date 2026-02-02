@@ -10,13 +10,6 @@ codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mo
 baseFontSize = 16
 baseFontWeight = 500
 
-[theme.dark]
-base = "dark"
-primaryColor = "#1f7a8c"
-backgroundColor = "#0f172a"
-secondaryBackgroundColor = "#1e293b"
-textColor = "#f1f5f9"
-
 [theme.sidebar]
 backgroundColor = "#eef3fb"
 secondaryBackgroundColor = "#ffffff"
