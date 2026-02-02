@@ -20,4 +20,3 @@ pydantic
 lightgbm
 keras
 hopsworks[python]
-hopsworks===4.2.*
