@@ -171,7 +171,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
 def get_aqi_color(aqi: float) -> str:
     if aqi <= 50:
         return "#00cc00"
@@ -185,7 +184,6 @@ def get_aqi_color(aqi: float) -> str:
         return "#9933cc"
     else:
         return "#660000"
-
 
 def get_aqi_category_text(aqi: float) -> str:
     if aqi <= 50:
@@ -201,7 +199,6 @@ def get_aqi_category_text(aqi: float) -> str:
     else:
         return "🟤 Hazardous"
 
-
 def get_aqi_category_name(aqi: float) -> str:
     if aqi <= 50:
         return "good"
@@ -215,7 +212,6 @@ def get_aqi_category_name(aqi: float) -> str:
         return "very-unhealthy"
     else:
         return "hazardous"
-
 
 def get_readable_feature_name(feature: str) -> str:
     mapping = {
@@ -244,7 +240,6 @@ def get_readable_feature_name(feature: str) -> str:
     
     return feature.replace('_', ' ').title()
 
-
 def generate_shap_summary(top_features: list) -> str:
     if not top_features or len(top_features) < 3:
         return "Insufficient data for explanation."
@@ -268,7 +263,6 @@ def generate_shap_summary(top_features: list) -> str:
         return f"Today's AQI is primarily influenced by {summary_parts[0]}."
     else:
         return f"The top factors affecting AQI are {', '.join(feature_names[:2])}."
-
 
 def get_health_recommendations(aqi: float) -> dict:
     if aqi <= 50:
@@ -314,7 +308,6 @@ def get_health_recommendations(aqi: float) -> dict:
             "precautions": "Emergency level. Everyone should remain indoors."
         }
 
-
 MODEL_DESCRIPTIONS = {
     "lightgbm": {
         "label": "LightGBM",
@@ -343,7 +336,6 @@ MODEL_DESCRIPTIONS = {
     },
 }
 
-
 def get_model_info(model_key: str) -> dict:
     key = (model_key or "").lower()
     return MODEL_DESCRIPTIONS.get(key, {
@@ -358,17 +350,14 @@ def fmt_metric_value(value: float) -> str:
         return f"{value:.3f}"
     return ""
 
-
 def pick_metric(metrics: dict, candidates: list) -> str:
     for key in candidates:
         if key in metrics and isinstance(metrics[key], (int, float)):
             return fmt_metric_value(metrics[key])
     return ""
 
-
 def get_selected_model() -> str:
     return st.session_state.get("selected_model") or st.session_state.get("default_model", "lightgbm")
-
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_models_list():
@@ -379,7 +368,6 @@ def fetch_models_list():
     except Exception:
         return {"available_models": ["lightgbm"], "default_model": "lightgbm", "loaded_models": []}
 
-
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_all_model_metrics():
     try:
@@ -388,7 +376,6 @@ def fetch_all_model_metrics():
         return response.json()
     except Exception:
         return None
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_forecast(model_name: str):
@@ -399,7 +386,6 @@ def fetch_forecast(model_name: str):
     except Exception:
         return None
 
-
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_current_aqi(model_name: str):
     try:
@@ -408,7 +394,6 @@ def fetch_current_aqi(model_name: str):
         return response.json()
     except Exception:
         return None
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_alerts(model_name: str):
@@ -419,7 +404,6 @@ def fetch_alerts(model_name: str):
     except Exception:
         return None
 
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_historical_data(days: int = 30):
     try:
@@ -428,7 +412,6 @@ def fetch_historical_data(days: int = 30):
         return response.json()
     except Exception:
         return None
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_feature_importance(model_name: str):
@@ -439,7 +422,6 @@ def fetch_feature_importance(model_name: str):
     except Exception:
         return None
 
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_shap_values(model_name: str):
     try:
@@ -448,7 +430,6 @@ def fetch_shap_values(model_name: str):
         return response.json()
     except Exception:
         return None
-
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_health_guide(model_name: str):
@@ -459,8 +440,6 @@ def fetch_health_guide(model_name: str):
     except Exception:
         return None
 
-
-
 def render_home_page(selected_model: str):
     st.markdown("""
         <div class="header-title">
@@ -468,10 +447,6 @@ def render_home_page(selected_model: str):
             <p>Real-time Air Quality Index Predictions for Hyderabad, Sindh</p>
         </div>
     """, unsafe_allow_html=True)
-    
-    now = datetime.now()
-    
-    st.divider()
     
     current_aqi = fetch_current_aqi(selected_model)
     forecast = fetch_forecast(selected_model)
@@ -683,7 +658,6 @@ def render_home_page(selected_model: str):
         - Monitor sensitive group members
         """)
 
-
 def render_detailed_forecast(selected_model: str):
     st.markdown("""
         <div class="header-title">
@@ -751,7 +725,6 @@ def render_detailed_forecast(selected_model: str):
                 st.metric("Average", f"{avg:.0f}", get_aqi_category_text(avg))
             with col3:
                 st.metric("Minimum", f"{min(aqi_values):.0f}")
-
 
 def render_health_guidance(selected_model: str):
     st.markdown("""
