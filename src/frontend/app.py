@@ -18,89 +18,48 @@ st.set_page_config(
 
 API_BASE_URL = os.getenv("API_BASE_URL")
 
-# Initialize theme in session state
-if 'theme' not in st.session_state:
-    st.session_state.theme = 'light'
-
-# Theme colors
-light_theme = {
-    'bg': '#f7f9fc',
-    'secondary_bg': '#ffffff',
-    'text': '#0f172a',
-    'border': '#e2e8f0',
-    'metric_bg': 'rgba(31, 119, 180, 0.1)',
-    'card_shadow': 'rgba(0,0,0,0.1)'
-}
-
-dark_theme = {
-    'bg': '#0f172a',
-    'secondary_bg': '#1e293b',
-    'text': '#f1f5f9',
-    'border': '#334155',
-    'metric_bg': 'rgba(31, 119, 180, 0.2)',
-    'card_shadow': 'rgba(0,0,0,0.3)'
-}
-
-theme = dark_theme if st.session_state.theme == 'dark' else light_theme
-
-st.markdown(f"""
+st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-    /* Theme-aware background and text */
-    .stApp {{
-        background-color: {theme['bg']};
-        color: {theme['text']};
-    }}
-
-    .stSidebar {{
-        background-color: {theme['secondary_bg']} !important;
-    }}
-
-    .stMarkdown, .stText, p {{
-        color: {theme['text']} !important;
-    }}
-
-    body, div, section, span, label, input, textarea, select, button {{
+    body, div, section, span, label, input, textarea, select, button {
         font-family: 'Manrope', 'Segoe UI', system-ui, -apple-system, sans-serif;
-    }}
+    }
 
-    h1, h2, h3, h4, h5, h6 {{
+    h1, h2, h3, h4, h5, h6 {
         font-family: 'Space Grotesk', 'Manrope', sans-serif;
         letter-spacing: 0.01em;
-        color: {theme['text']} !important;
-    }}
+    }
 
-    code, pre, .code, .stCode, .stMarkdown code {{
+    code, pre, .code, .stCode, .stMarkdown code {
         font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
-    }}
+    }
 
-    :root {{
+    :root {
         --primary-color: #1f77b4;
         --good-color: #00cc00;
         --moderate-color: #ffcc00;
         --unhealthy-color: #ff6600;
         --hazard-color: #ff0000;
         --very-unhealthy-color: #9933cc;
-    }}
+    }
     
-    .metric-box {{
-        background: {theme['metric_bg']};
+    .metric-box {
+        background: linear-gradient(135deg, rgba(31, 119, 180, 0.1), rgba(31, 119, 180, 0.05));
         padding: 20px;
         border-radius: 15px;
         border-left: 5px solid #1f77b4;
         margin: 10px 0;
-        box-shadow: 0 2px 8px {theme['card_shadow']};
-        border: 1px solid {theme['border']};
-    }}
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
     
-    .good {{ color: #00cc00; font-weight: bold; }}
-    .moderate {{ color: #ffcc00; font-weight: bold; }}
-    .unhealthy {{ color: #ff6600; font-weight: bold; }}
-    .very-unhealthy {{ color: #9933cc; font-weight: bold; }}
-    .hazardous {{ color: #ff0000; font-weight: bold; }}
+    .good { color: #00cc00; font-weight: bold; }
+    .moderate { color: #ffcc00; font-weight: bold; }
+    .unhealthy { color: #ff6600; font-weight: bold; }
+    .very-unhealthy { color: #9933cc; font-weight: bold; }
+    .hazardous { color: #ff0000; font-weight: bold; }
     
-    .aqi-category-box {{
+    .aqi-category-box {
         padding: 20px;
         border-radius: 15px;
         text-align: center;
@@ -108,36 +67,36 @@ st.markdown(f"""
         font-weight: bold;
         font-size: 18px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }}
+    }
     
-    .aqi-category-box div {{
+    .aqi-category-box div {
         color: white !important;
-    }}
+    }
     
-    .aqi-box-good {{ 
+    .aqi-box-good { 
         background: linear-gradient(135deg, #00cc00, #00aa00) !important;
-    }}
-    .aqi-box-moderate {{ 
+    }
+    .aqi-box-moderate { 
         background: linear-gradient(135deg, #ffcc00, #ff9900) !important;
         color: #000000 !important;
-    }}
-    .aqi-box-moderate div {{
+    }
+    .aqi-box-moderate div {
         color: #000000 !important;
-    }}
-    .aqi-box-unhealthy-for-sensitive-groups {{ 
+    }
+    .aqi-box-unhealthy-for-sensitive-groups { 
         background: linear-gradient(135deg, #ff8c00, #ff6600) !important;
-    }}
-    .aqi-box-unhealthy {{ 
+    }
+    .aqi-box-unhealthy { 
         background: linear-gradient(135deg, #ff6600, #ff3300) !important;
-    }}
-    .aqi-box-very-unhealthy {{ 
+    }
+    .aqi-box-very-unhealthy { 
         background: linear-gradient(135deg, #9933cc, #7700aa) !important;
-    }}
-    .aqi-box-hazardous {{ 
+    }
+    .aqi-box-hazardous { 
         background: linear-gradient(135deg, #ff0000, #cc0000) !important;
-    }}
+    }
     
-    .header-title {{
+    .header-title {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         padding: 40px;
@@ -145,70 +104,70 @@ st.markdown(f"""
         margin-bottom: 30px;
         text-align: center;
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    }}
+    }
     
-    .header-title h1 {{
+    .header-title h1 {
         margin: 0;
         font-size: 2.5em;
-    }}
+    }
     
-    .header-title p {{
+    .header-title p {
         margin: 10px 0 0 0;
         font-size: 1.1em;
         opacity: 0.95;
-    }}
+    }
     
-    .info-card {{
+    .info-card {
         background: white;
         padding: 15px;
         border-radius: 10px;
         border-left: 4px solid #1f77b4;
         margin: 10px 0;
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }}
+    }
     
-    .recommendation-box {{
+    .recommendation-box {
         padding: 15px;
         border-radius: 10px;
         margin: 10px 0;
         border-left: 4px solid;
-    }}
+    }
     
-    .recommendation-good {{ 
+    .recommendation-good { 
         background-color: rgba(0, 204, 0, 0.1);
         border-left-color: #00cc00;
-    }}
+    }
     
-    .recommendation-caution {{
+    .recommendation-caution {
         background-color: rgba(255, 204, 0, 0.1);
         border-left-color: #ffcc00;
-    }}
+    }
     
-    .recommendation-warning {{
+    .recommendation-warning {
         background-color: rgba(255, 102, 0, 0.1);
         border-left-color: #ff6600;
-    }}
+    }
     
-    .recommendation-alert {{
+    .recommendation-alert {
         background-color: rgba(255, 0, 0, 0.1);
         border-left-color: #ff0000;
-    }}
+    }
     
-    .stat-card {{
+    .stat-card {
         background: white;
         padding: 20px;
         border-radius: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         text-align: center;
-    }}
+    }
     
-    .chart-container {{
+    .chart-container {
         background: white;
         padding: 15px;
         border-radius: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         margin: 20px 0;
-    }}
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -1180,13 +1139,6 @@ def render_model_info(selected_model: str):
 
 def main():
     st.sidebar.title("🌍 AQI Predictor")
-    
-    # Theme toggle
-    theme_icon = "🌙" if st.session_state.theme == 'light' else "☀️"
-    if st.sidebar.button(f"{theme_icon} Toggle Theme", use_container_width=True):
-        st.session_state.theme = 'dark' if st.session_state.theme == 'light' else 'light'
-        st.rerun()
-    
     st.sidebar.markdown("---")
 
     models_info = fetch_models_list()
