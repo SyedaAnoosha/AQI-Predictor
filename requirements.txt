@@ -24,3 +24,4 @@ python-dotenv>=1.0.0
 plotly>=5.10.0
 
 hopsworks[python]==4.2.*
+sqlalchemy<=1.4.48
