@@ -1,25 +1,20 @@
-# Core dependencies - install first
 numpy<2
 
-# Data science stack - requires numpy
 pandas
 scikit-learn
 matplotlib
 seaborn
 shap<0.45
 
-# ML frameworks
 xgboost
 lightgbm
 tensorflow
 
-# API and web frameworks
 fastapi
 uvicorn
 pydantic
 streamlit
 
-# Utilities
 joblib
 requests
 openmeteo-requests
@@ -28,5 +23,4 @@ retry_requests
 python-dotenv
 plotly>=5.10.0
 
-# Feature store
 hopsworks[python]
