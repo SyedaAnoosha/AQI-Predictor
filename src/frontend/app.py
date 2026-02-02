@@ -991,17 +991,6 @@ def render_model_info(selected_model: str):
             else:
                 metrics_all["metrics"] = local_metrics
             metrics_payload = local_metrics
-
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Selected Model", selected_model)
-    
-    with col2:
-        st.metric("Loaded Models", len(metrics_payload or {}) if metrics_all else 1)
-    
-    with col3:
-        st.metric("Default Model", metrics_all.get("default_model", "lightgbm") if metrics_all else "lightgbm")
     
     if metrics_all and metrics_payload:
         st.subheader("📈 Model Metrics")
