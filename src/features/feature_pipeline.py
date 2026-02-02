@@ -36,52 +36,41 @@ def run_feature_pipeline():
         if not hopsworks_api_key:
             raise ValueError("HOPSWORKS_API_KEY not set in environment")
         
-        yesterday = datetime.now() - timedelta(days=1)
-        two_years_ago = yesterday - timedelta(days=730)
+        now = datetime.now()
+        lookback_hours = 26
+        lookback_start = now - timedelta(hours=lookback_hours)
         
-        historical_start = two_years_ago.strftime("%Y-%m-%d")
-        historical_end = yesterday.strftime("%Y-%m-%d")
+        start_str = lookback_start.strftime("%Y-%m-%d")
+        end_str = now.strftime("%Y-%m-%d")
         
-        historical_weather = fetch_historical_weather(
-            start_date=historical_start,
-            end_date=historical_end,
+        print(f"Incremental update: Fetching observed data from last {lookback_hours} hours")
+        print(f"Date range: {start_str} to {end_str}")
+        
+        weather_df = fetch_historical_weather(
+            start_date=start_str,
+            end_date=end_str,
             latitude=latitude,
             longitude=longitude,
             timezone=timezone
         )
         
-        historical_aqi = fetch_historical_aqi(
-            start_date=historical_start,
-            end_date=historical_end,
+        aqi_df = fetch_historical_aqi(
+            start_date=start_str,
+            end_date=end_str,
             latitude=latitude,
             longitude=longitude,
             timezone=timezone
         )
         
-        forecast_weather = fetch_weather_forecast(
-            days=5,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        forecast_aqi = fetch_aqi_forecast(
-            days=5,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        weather_df = pd.concat([historical_weather, forecast_weather], ignore_index=True)
-        aqi_df = pd.concat([historical_aqi, forecast_aqi], ignore_index=True)
-        
-        weather_df = weather_df.drop_duplicates(subset=['time'], keep='first')
-        aqi_df = aqi_df.drop_duplicates(subset=['time'], keep='first')
+        weather_df = weather_df.drop_duplicates(subset=['time'], keep='last')
+        aqi_df = aqi_df.drop_duplicates(subset=['time'], keep='last')
         
         combined_df = pd.merge(weather_df, aqi_df, on='time', how='inner')
         
         if 'us_aqi' in combined_df.columns:
             combined_df = combined_df.rename(columns={'us_aqi': 'aqi'})
+        
+        print(f"Fetched {len(combined_df)} rows of observed data")
         
         features_df = process_features(
             combined_df,
@@ -91,10 +80,23 @@ def run_feature_pipeline():
         )
         
         if features_df.isnull().sum().sum() > 0:
+            print(f"Dropping {features_df.isnull().sum().sum()} rows with NaN values")
             features_df = features_df.dropna()
         
         if len(features_df) == 0:
+            print("No new data to insert after feature engineering")
             return True
+        
+        features_df['time'] = pd.to_datetime(features_df['time'], utc=True)
+        
+        cutoff_time = pd.Timestamp(now - timedelta(hours=2)).tz_localize('UTC')
+        new_data = features_df[features_df['time'] >= cutoff_time].copy()
+        
+        if len(new_data) == 0:
+            print("No new timestamps to insert (all data already in feature store)")
+            return True
+        
+        print(f"Inserting {len(new_data)} new rows (last 2 hours only)")
         
         float32_cols = [
             'pm10', 'pm2_5', 'nitrogen_dioxide', 'sulphur_dioxide', 'aqi',
@@ -103,8 +105,8 @@ def run_feature_pipeline():
             'aqi_rate_1h', 'aqi_rate_3h', 'aqi_rate_24h'
         ]
         for col in float32_cols:
-            if col in features_df.columns:
-                features_df[col] = features_df[col].astype('float32')
+            if col in new_data.columns:
+                new_data[col] = new_data[col].astype('float32')
         
         project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
         
@@ -114,17 +116,9 @@ def run_feature_pipeline():
             version=1,
         )
         
-        batch_size = 1000
-        total_rows = len(features_df)
-        print(f"Uploading {total_rows} rows in batches of {batch_size}")
+        insert_features(fg, new_data)
+        print(f"Successfully inserted {len(new_data)} new rows")
         
-        for i in range(0, total_rows, batch_size):
-            batch_end = min(i + batch_size, total_rows)
-            batch_df = features_df.iloc[i:batch_end]
-            print(f"Uploading batch {i//batch_size + 1}/{(total_rows + batch_size - 1)//batch_size} ({len(batch_df)} rows)")
-            insert_features(fg, batch_df)
-        
-        print(f"Successfully uploaded all {total_rows} rows")
         return True
         
     except Exception as e:
