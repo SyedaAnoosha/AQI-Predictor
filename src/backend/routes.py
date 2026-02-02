@@ -31,18 +31,37 @@ LATITUDE = 25.3792
 LONGITUDE = 68.3683
 TIMEZONE = 'Asia/Karachi'
 HOPSWORKS_API_KEY = os.getenv('HOPSWORKS_API_KEY')
-_default_model_list = 'lightgbm'
-AVAILABLE_MODELS: List[str] = [_default_model_list]
-DEFAULT_MODEL = AVAILABLE_MODELS[0]
 MODEL_CACHE: Dict[str, Any] = {}
 
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'cache'))
 METRICS_CACHE_PATH = os.path.join(CACHE_DIR, 'all_model_metrics.json')
+BEST_MODEL_META_PATH = os.path.join(CACHE_DIR, 'best_model_meta.json')
+
+def _normalize_model_key(name: str) -> str:
+    return (name or '').strip().lower().replace(' ', '_')
+
+def _load_best_model_name() -> str:
+    try:
+        if os.path.exists(BEST_MODEL_META_PATH):
+            with open(BEST_MODEL_META_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            best = data.get('best_model') if isinstance(data, dict) else None
+            best_key = _normalize_model_key(best)
+            if best_key:
+                return best_key
+    except Exception:
+        pass
+    return ""
+
+DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', '').strip().lower()
+DEFAULT_MODEL = DEFAULT_MODEL if DEFAULT_MODEL else _load_best_model_name() or 'lightgbm'
+AVAILABLE_MODELS: List[str] = [DEFAULT_MODEL]
 
 def _load_and_cache_model(model_name: str) -> Any:
-    artifacts = load_model_artifacts(api_key=HOPSWORKS_API_KEY, model_name=model_name)
+    normalized = _normalize_model_key(model_name)
+    artifacts = load_model_artifacts(api_key=HOPSWORKS_API_KEY, model_name=normalized)
     if artifacts:
-        MODEL_CACHE[model_name] = artifacts
+        MODEL_CACHE[normalized] = artifacts
     return artifacts
 
 _load_and_cache_model(DEFAULT_MODEL)
@@ -50,11 +69,14 @@ _load_and_cache_model(DEFAULT_MODEL)
 model_artifacts = MODEL_CACHE.get(DEFAULT_MODEL)
 
 def _get_model(model_name: str) -> Any:
-    artifacts = MODEL_CACHE.get(DEFAULT_MODEL)
+    requested = _normalize_model_key(model_name) or DEFAULT_MODEL
+    artifacts = MODEL_CACHE.get(requested)
     if artifacts is None:
-        artifacts = _load_and_cache_model(DEFAULT_MODEL)
+        artifacts = _load_and_cache_model(requested)
+    if artifacts is None and requested != DEFAULT_MODEL:
+        artifacts = MODEL_CACHE.get(DEFAULT_MODEL) or _load_and_cache_model(DEFAULT_MODEL)
     if artifacts is None:
-        raise HTTPException(status_code=503, detail=f"Model '{DEFAULT_MODEL}' not available")
+        raise HTTPException(status_code=503, detail=f"Model '{requested}' not available")
     return artifacts
 
 def _load_cached_metrics() -> Dict[str, Any]:
@@ -63,7 +85,12 @@ def _load_cached_metrics() -> Dict[str, Any]:
             with open(METRICS_CACHE_PATH, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                return data
+                normalized = {}
+                for name, metrics in data.items():
+                    key = _normalize_model_key(name)
+                    if key:
+                        normalized[key] = metrics
+                return normalized or data
     except Exception:
         pass
     return {}
@@ -75,7 +102,7 @@ def _load_cached_metrics() -> Dict[str, Any]:
     tags=["Predictions"]
 )
 async def get_3day_forecast(model: str = Query(DEFAULT_MODEL, description="Model name to use")):
-    artifacts = _get_model(DEFAULT_MODEL)
+    artifacts = _get_model(model)
     
     response = generate_forecast(
         artifacts,
@@ -93,7 +120,7 @@ async def get_3day_forecast(model: str = Query(DEFAULT_MODEL, description="Model
     tags=["Predictions"]
 )
 async def get_24hour_forecast(model: str = Query(DEFAULT_MODEL, description="Model name to use")):
-    artifacts = _get_model(DEFAULT_MODEL)
+    artifacts = _get_model(model)
     response = generate_forecast(
         artifacts,
         hours=24,
@@ -110,7 +137,7 @@ async def get_24hour_forecast(model: str = Query(DEFAULT_MODEL, description="Mod
     tags=["Alerts"]
 )
 async def get_alerts(model: str = Query(DEFAULT_MODEL, description="Model name to use")):
-    artifacts = _get_model(DEFAULT_MODEL)
+    artifacts = _get_model(model)
     
     try:
         current_data = get_current_aqi(
@@ -149,7 +176,7 @@ async def get_alerts(model: str = Query(DEFAULT_MODEL, description="Model name t
     tags=["Explainability"]
 )
 async def get_feature_importance_endpoint(model: str = Query(DEFAULT_MODEL, description="Model name to use")):
-    artifacts = _get_model(DEFAULT_MODEL)
+    artifacts = _get_model(model)
     
     try:
         importance_dict = get_feature_importance(artifacts)
@@ -307,10 +334,11 @@ async def get_model_metrics_endpoint(model: str = Query(DEFAULT_MODEL, descripti
 
     try:
         cached = _load_cached_metrics()
-        metrics = cached.get(model) or get_model_metrics(artifacts)
+        model_key = _normalize_model_key(model)
+        metrics = cached.get(model_key) or get_model_metrics(artifacts)
 
         response = {
-            "model_name": model,
+            "model_name": model_key or model,
             "model_version": 1,
             "evaluation_date": datetime.now(),
             "metrics": metrics
@@ -347,9 +375,11 @@ async def get_all_model_metrics():
     tags=["Model Info"]
 )
 async def list_models():
+    cached = _load_cached_metrics()
+    available = list(cached.keys()) if cached else (list(MODEL_CACHE.keys()) if MODEL_CACHE else [DEFAULT_MODEL])
     return {
         "default_model": DEFAULT_MODEL,
-        "available_models": [DEFAULT_MODEL],
+        "available_models": available,
         "loaded_models": list(MODEL_CACHE.keys())
     }
 
