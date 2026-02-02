@@ -972,7 +972,6 @@ def render_alerts(selected_model: str):
                     for group in affected:
                         st.warning(f"• {group}")
 
-
 def render_model_info(selected_model: str):
     st.markdown("""
         <div class="header-title">
