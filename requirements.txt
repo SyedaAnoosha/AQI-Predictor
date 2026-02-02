@@ -2,7 +2,6 @@ streamlit
 pandas
 numpy<2
 scikit-learn
-hopsworks==4.2.*
 joblib
 requests
 openmeteo-requests
