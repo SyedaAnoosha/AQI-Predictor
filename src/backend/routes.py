@@ -367,16 +367,12 @@ async def get_all_model_metrics_endpoint():
             metrics_payload = cached if cached else {}
         else:
             try:
-                logger.info("Attempting to fetch metrics from Hopsworks")
                 project, fs = connect_hopsworks(HOPSWORKS_API_KEY)
                 mr = project.get_model_registry()
                 metrics_payload = get_all_model_metrics(mr)
-                logger.info(f"Fetched {len(metrics_payload)} models from Hopsworks: {list(metrics_payload.keys())}")
                 
                 if not metrics_payload:
-                    logger.info("No metrics from Hopsworks, falling back to cache")
                     metrics_payload = _load_cached_metrics()
-                    logger.info(f"Final metrics payload has {len(metrics_payload)} models: {list(metrics_payload.keys())}")
             except Exception as e:
                 logger.warning(f"Could not fetch from Hopsworks: {e}, falling back to cache")
                 metrics_payload = _load_cached_metrics()
