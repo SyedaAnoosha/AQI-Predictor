@@ -12,7 +12,7 @@
 
 Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML models, automated hourly data collection, and daily model retraining. Features interactive dashboard, health alerts, and SHAP explainability.
 
-**Live App**: https://ten-pearls-aqi-predictor.streamlit.app/
+**Live App**: [https://ten-pearls-aqi-predictor.streamlit.app/](https://hyderabad-pearls-aqi-predictor.streamlit.app/)
 
 **Backend API (Render)**: https://aqi-predictor-4r2g.onrender.com
 
@@ -379,7 +379,7 @@ AQI-Predictor/
 ## 🚢 Deployment
 
 ### Live Deployments
-- **Streamlit App**: https://ten-pearls-aqi-predictor.streamlit.app/
+- **Streamlit App**: https://hyderabad-pearls-aqi-predictor.streamlit.app/
 - **FastAPI Backend (Render)**: https://aqi-predictor-4r2g.onrender.com
 
 ### GitHub Actions (Automated)
@@ -489,7 +489,7 @@ We welcome contributions! Please follow these steps:
 
 **Project Maintainer:** Your Name  
 **Email:** your.email@example.com  
-**GitHub:** [@yourusername](https://github.com/yourusername)
+**GitHub:** [@SyedaAnoosha](https://github.com/SyedaAnoosha)
 
 ---
 
@@ -502,5 +502,6 @@ If you find this project helpful, please give it a ⭐!
 <p align="center">
   <strong>Built with ❤️ for cleaner air and healthier communities</strong>
 </p>
+
 
 
