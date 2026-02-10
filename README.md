@@ -29,8 +29,6 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 - [Project Structure](#-project-structure)
 - [Deployment](#-deployment)
 - [Model Performance](#-model-performance)
-- [Contributing](#-contributing)
-- [License](#-license)
 
 ---
 
@@ -348,18 +346,7 @@ AQI-Predictor/
 │       └── training-pipeline.yml     # Daily model training
 ├── data/
 │   └── backfill_*.csv               # Historical data exports
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DEPLOYMENT_GUIDE.md
-│   └── API_REFERENCE.md
-├── models/
-│   ├── cache/
-│   │   ├── predictions_72h.json     # Cached forecasts
-│   │   ├── all_model_metrics.json   # Model comparison
-│   │   └── best_model_meta.json     # Best model metadata
-│   ├── lightgbm_model.pkl           # Best model artifact
-│   ├── feature_names.json           # Feature schema
-│   └── metrics.json                 # Performance metrics
+├── models/                          # placeholder
 ├── notebooks/
 │   └── eda.ipynb                    # Exploratory Data Analysis
 ├── scripts/
@@ -515,4 +502,5 @@ If you find this project helpful, please give it a ⭐!
 <p align="center">
   <strong>Built with ❤️ for cleaner air and healthier communities</strong>
 </p>
+
 
