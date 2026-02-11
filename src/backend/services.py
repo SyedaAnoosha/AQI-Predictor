@@ -45,6 +45,7 @@ def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> O
             api_key = os.getenv('HOPSWORKS_API_KEY')
             if not api_key:
                 return load_model_from_disk(model_name=model_name)
+        allow_disk_fallback = os.getenv("ALLOW_DISK_FALLBACK", "false").strip().lower() == "true"
         
         try:
             project, fs = connect_hopsworks(api_key)
@@ -63,7 +64,7 @@ def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> O
                 registry_metrics = {}
             
             if model_dir is None:
-                return load_model_from_disk(model_name=model_name)
+                return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
             
             model_path = os.path.join(model_dir, f"{model_name}.pkl")
             features_path = os.path.join(model_dir, "feature_names.json")
@@ -79,13 +80,19 @@ def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> O
             with open(model_path, 'rb') as f:
                 model = pickle.load(f)
             
-            with open(features_path, 'r') as f:
-                feature_names = json.load(f)
+            if os.path.exists(features_path):
+                with open(features_path, 'r') as f:
+                    feature_names = json.load(f)
+            else:
+                feature_names = []
 
             feature_names = _resolve_feature_names(model, feature_names)
             
-            with open(metrics_path, 'r') as f:
-                metrics = json.load(f)
+            if os.path.exists(metrics_path):
+                with open(metrics_path, 'r') as f:
+                    metrics = json.load(f)
+            else:
+                metrics = {}
 
             if registry_metrics:
                 merged_metrics = {}
@@ -99,7 +106,7 @@ def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> O
                 'metrics': metrics
             }
         except Exception as hops_error:
-            return load_model_from_disk(model_name=model_name)
+            return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
             
     except Exception as e:
         return None

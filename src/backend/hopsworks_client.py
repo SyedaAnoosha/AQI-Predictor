@@ -5,11 +5,23 @@ from typing import Optional, Tuple
 
 
 def connect_hopsworks(api_key: str, project_name: str = "aqi_predictor"):
+    """
+    Connect to Hopsworks feature store.
+    
+    Args:
+        api_key: Hopsworks API key
+        project_name: Project name (default: aqi_predictor)
+    
+    Returns:
+        Tuple of (project, feature_store)
+    """
     try:
         project = hopsworks.login(api_key_value=api_key)
         fs = project.get_feature_store()
+        print(f"✅ Connected to Hopsworks project: {project.name}")
         return project, fs
     except Exception as e:
+        print(f"❌ Failed to connect to Hopsworks: {str(e)}")
         raise
 
 
@@ -40,10 +52,47 @@ def create_feature_group(
         raise
 
 
-def insert_features(fg, df: pd.DataFrame):
+def insert_features(fg, df: pd.DataFrame, retries: int = 3):
+    """
+    Insert features into Hopsworks with retry logic for network resilience.
+    
+    Args:
+        fg: Feature group object
+        df: DataFrame to insert
+        retries: Number of retry attempts (default: 3)
+    """
+    import time
+    
+    for attempt in range(retries):
+        try:
+            fg.insert(df, write_options={"wait_for_job": True})
+            print(f"✅ Successfully inserted {len(df)} rows to {fg.name}")
+            return
+        except Exception as e:
+            if attempt < retries - 1:
+                # Exponential backoff: 2^attempt seconds (2s, 4s, 8s...)
+                wait_time = 2 ** attempt
+                print(f"⚠️  Insert failed (attempt {attempt + 1}/{retries}): {str(e)[:100]}")
+                print(f"⏳ Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                # All retries exhausted
+                print(f"❌ Failed to insert {len(df)} rows after {retries} attempts")
+                raise
+
+
+def validate_connection(fs):
+    """
+    Validate Hopsworks connection by listing feature groups.
+    
+    Returns True if connection is healthy, raises exception otherwise.
+    """
     try:
-        fg.insert(df, write_options={"wait_for_job": True})
+        fgs = fs.list_feature_groups()
+        print(f"✅ Hopsworks connection healthy. Found {len(fgs)} feature groups")
+        return True
     except Exception as e:
+        print(f"❌ Hopsworks connection failed: {str(e)}")
         raise
 
 
@@ -187,6 +236,7 @@ def load_model_from_registry(
 ):
     try:
         model = None
+        normalized_name = (model_name or "").strip().lower()
 
         if metric:
             try:
@@ -204,6 +254,21 @@ def load_model_from_registry(
                         reverse=True
                     )
                     model = candidates[0]
+            except Exception:
+                pass
+
+        if model is None:
+            try:
+                all_models = mr.get_models()
+                if all_models:
+                    matched = [m for m in all_models if getattr(m, "name", "").strip().lower() == normalized_name]
+                    if matched:
+                        matched = sorted(
+                            matched,
+                            key=lambda m: getattr(m, "version", 0),
+                            reverse=True
+                        )
+                        model = matched[0]
             except Exception:
                 pass
 

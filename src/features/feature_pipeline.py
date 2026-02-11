@@ -16,7 +16,7 @@ from backend.api_client import (
     fetch_weather_forecast
 )
 from features.feature_engineering import process_features, process_forecast_features
-from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
+from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features, validate_connection
 
 def get_yesterday_date() -> str:
     yesterday = datetime.now() - timedelta(days=1)
@@ -122,6 +122,9 @@ def run_feature_pipeline():
                 new_data[col] = new_data[col].astype('float32')
         
         project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
+        
+        # Validate connection before proceeding
+        validate_connection(fs)
         
         fg = create_feature_group(
             fs,
