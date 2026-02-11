@@ -236,32 +236,49 @@ def load_model_from_registry(
 ):
     try:
         model = None
-        normalized_name = (model_name or "").strip().lower()
+        normalized_name = (model_name or "").strip().lower().replace(" ", "_")
+        name_candidates = [normalized_name]
+        alias_map = {
+            "lightgbm": ["lightgbm"],
+            "xgboost": ["xgboost"],
+            "random_forest": ["random_forest"],
+            "elasticnet": ["elasticnet"],
+            "tensorflow_nn": ["tensorflow_nn"],
+        }
+        name_candidates = alias_map.get(normalized_name, name_candidates)
 
         if metric:
-            try:
-                model = mr.get_best_model(model_name, metric, sort_by or "min")
-            except Exception:
-                pass
+            for name in name_candidates:
+                try:
+                    model = mr.get_best_model(name, metric, sort_by or "min")
+                    if model is not None:
+                        break
+                except Exception:
+                    continue
 
         if model is None:
-            try:
-                candidates = mr.get_models(name=model_name)
-                if candidates:
-                    candidates = sorted(
-                        candidates,
-                        key=lambda m: getattr(m, "version", 0),
-                        reverse=True
-                    )
-                    model = candidates[0]
-            except Exception:
-                pass
+            for name in name_candidates:
+                try:
+                    candidates = mr.get_models(name=name)
+                    if candidates:
+                        candidates = sorted(
+                            candidates,
+                            key=lambda m: getattr(m, "version", 0),
+                            reverse=True
+                        )
+                        model = candidates[0]
+                        break
+                except Exception:
+                    continue
 
         if model is None:
             try:
                 all_models = mr.get_models()
                 if all_models:
-                    matched = [m for m in all_models if getattr(m, "name", "").strip().lower() == normalized_name]
+                    matched = [
+                        m for m in all_models
+                        if getattr(m, "name", "").strip().lower().replace(" ", "_") in name_candidates
+                    ]
                     if matched:
                         matched = sorted(
                             matched,

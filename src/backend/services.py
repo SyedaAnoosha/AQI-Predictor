@@ -41,6 +41,7 @@ def _resolve_feature_names(model: Any, feature_names_from_file: List[str]) -> Li
 
 def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> Optional[Dict[str, Any]]:
     try:
+        model_name = (model_name or "").strip().lower().replace(" ", "_")
         if api_key is None:
             api_key = os.getenv('HOPSWORKS_API_KEY')
             if not api_key:
