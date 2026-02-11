@@ -15,13 +15,13 @@ load_dotenv(dotenv_path=env_path)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.api_client import (
-    fetch_weather_forecast, fetch_aqi_forecast,
+    fetch_weather_forecast,
     fetch_historical_weather, fetch_historical_aqi
 )
 from backend.hopsworks_client import (
-    connect_hopsworks, load_model_from_registry
+    connect_hopsworks, load_model_from_registry, get_forecast_features
 )
-from features.feature_engineering import process_features, prepare_for_prediction
+from features.feature_engineering import process_features, process_forecast_features, prepare_for_prediction
 from backend.schemas import (
     PredictionResponse, PredictionItem, AlertResponse, 
     get_aqi_category, get_health_recommendation
@@ -180,23 +180,31 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                      longitude: float = 68.3683,
                      timezone: str = "Asia/Karachi") -> PredictionResponse:
     try:
-        weather_forecast_df = fetch_weather_forecast(
-            days=int(hours / 24) + 1,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        aqi_forecast_df = fetch_aqi_forecast(
-            days=int(hours / 24) + 1,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        forecast_df = pd.merge(weather_forecast_df, aqi_forecast_df, on='time', how='inner')
-        
-        forecast_df = forecast_df.head(hours + 24)
+        next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
+        next_local_hour_utc = next_local_hour.tz_convert('UTC')
+        end_time_utc = next_local_hour_utc + pd.Timedelta(hours=hours + 24)
+
+        forecast_df = pd.DataFrame()
+        hopsworks_api_key = os.getenv('HOPSWORKS_API_KEY')
+        if hopsworks_api_key:
+            try:
+                project, fs = connect_hopsworks(hopsworks_api_key)
+                forecast_df = get_forecast_features(
+                    fs,
+                    start_time=next_local_hour_utc.strftime('%Y-%m-%d %H:%M:%S'),
+                    end_time=end_time_utc.strftime('%Y-%m-%d %H:%M:%S'),
+                )
+            except Exception:
+                forecast_df = pd.DataFrame()
+
+        if forecast_df.empty:
+            weather_forecast_df = fetch_weather_forecast(
+                days=int(hours / 24) + 1,
+                latitude=latitude,
+                longitude=longitude,
+                timezone=timezone
+            )
+            forecast_df = weather_forecast_df.head(hours + 24)
         
         end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
@@ -219,25 +227,35 @@ def generate_forecast(model_artifacts: Dict[str, Any],
         
         hist_combined = pd.merge(hist_weather, hist_aqi, on='time', how='inner')
         
-        combined_df = pd.concat([hist_combined, forecast_df], ignore_index=True)
-        combined_df = combined_df.sort_values('time').reset_index(drop=True)
+        hist_combined = hist_combined.sort_values('time').reset_index(drop=True)
+        hist_combined['time'] = pd.to_datetime(hist_combined['time'], utc=True).dt.tz_convert(timezone)
 
-        combined_df['time'] = pd.to_datetime(combined_df['time'], utc=True).dt.tz_convert(timezone)
+        forecast_df = forecast_df.copy()
+        forecast_df['time'] = pd.to_datetime(forecast_df['time'], utc=True).dt.tz_convert(timezone)
+        forecast_df = forecast_df.sort_values('time').reset_index(drop=True)
 
-        next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
-        combined_df['is_forecast'] = combined_df['time'] >= next_local_hour
-        
-        features_df = process_features(
-            combined_df,
+        hist_features = process_features(
+            hist_combined,
             include_lags=True,
             include_aqi_change_rate=True,
             include_aqi_rate=False
         )
 
-        forecast_mask = combined_df.loc[features_df.index, 'is_forecast']
-        forecast_features = features_df[forecast_mask.to_numpy()].copy()
+        if hist_features.empty:
+            raise ValueError("No historical features available for lag computation")
+
+        last_hist_row = hist_features.sort_values('time').iloc[-1]
+
+        forecast_features = process_forecast_features(forecast_df)
         forecast_features = forecast_features[forecast_features['time'] >= next_local_hour]
         forecast_features = forecast_features.head(hours)
+
+        lag_cols = [
+            col for col in hist_features.columns
+            if "_lag_" in col or col.startswith("aqi_change_") or col.startswith("aqi_rate_")
+        ]
+        for col in lag_cols:
+            forecast_features[col] = last_hist_row[col]
 
         if forecast_features.empty:
             raise ValueError("No forecast rows available after aligning to next local hour")
@@ -282,30 +300,19 @@ def get_current_aqi(model_artifacts: Dict[str, Any],
         weather_hist = fetch_historical_weather(start_date, end_date, latitude, longitude, timezone)
         aqi_hist = fetch_historical_aqi(start_date, end_date, latitude, longitude, timezone)
 
-        weather_fc = fetch_weather_forecast(days=1, latitude=latitude, longitude=longitude, timezone=timezone)
-        aqi_fc = fetch_aqi_forecast(days=1, latitude=latitude, longitude=longitude, timezone=timezone)
-
         hist_combined = pd.merge(weather_hist, aqi_hist, on='time', how='inner')
-        fc_combined = pd.merge(weather_fc, aqi_fc, on='time', how='inner')
-        combined_df = pd.concat([hist_combined, fc_combined], ignore_index=True).sort_values('time')
-        combined_df['time'] = pd.to_datetime(combined_df['time'], utc=True).dt.tz_convert(timezone)
+        hist_combined = hist_combined.sort_values('time').reset_index(drop=True)
+        hist_combined['time'] = pd.to_datetime(hist_combined['time'], utc=True).dt.tz_convert(timezone)
 
         features_df = process_features(
-            combined_df,
+            hist_combined,
             include_lags=True,
             include_aqi_change_rate=True,
             include_aqi_rate=False
         )
 
-        current_time = pd.Timestamp.now(tz=features_df['time'].dt.tz if hasattr(features_df['time'], 'dt') else None)
-        future_mask = features_df['time'] >= current_time
-        if future_mask.any():
-            current_features = features_df[future_mask].head(1)
-        else:
-            current_features = features_df.tail(1)
-
-        current_index = current_features.index[0]
-        current_row = combined_df.loc[current_index]
+        current_features = features_df.tail(1)
+        current_row = hist_combined.loc[current_features.index[0]]
 
         current_aqi = make_predictions(model_artifacts, current_features)[0]
         

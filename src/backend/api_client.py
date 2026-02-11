@@ -162,51 +162,51 @@ def fetch_weather_forecast(
         raise
 
 
-def fetch_aqi_forecast(
-    days: int,
-    latitude: float,
-    longitude: float,
-    timezone: str = "Asia/Karachi"
-) -> pd.DataFrame:
-    try:
-        client = get_api_client()
-        url = "https://air-quality-api.open-meteo.com/v1/air-quality"
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "hourly": [
-                "pm10",
-                "pm2_5",
-                "nitrogen_dioxide",
-                "sulphur_dioxide",
-                "ozone",
-                "carbon_monoxide",
-                "us_aqi",
-            ],
-            "forecast_days": days,
-            "domains": "auto",
-            "timezone": timezone,
-        }
+# def fetch_aqi_forecast(
+#     days: int,
+#     latitude: float,
+#     longitude: float,
+#     timezone: str = "Asia/Karachi"
+# ) -> pd.DataFrame:
+#     try:
+#         client = get_api_client()
+#         url = "https://air-quality-api.open-meteo.com/v1/air-quality"
+#         params = {
+#             "latitude": latitude,
+#             "longitude": longitude,
+#             "hourly": [
+#                 "pm10",
+#                 "pm2_5",
+#                 "nitrogen_dioxide",
+#                 "sulphur_dioxide",
+#                 "ozone",
+#                 "carbon_monoxide",
+#                 "us_aqi",
+#             ],
+#             "forecast_days": days,
+#             "domains": "auto",
+#             "timezone": timezone,
+#         }
         
-        response = client.weather_api(url, params=params)[0]
-        hourly = response.Hourly()
-        hourly_data = {
-            "time": pd.date_range(
-                start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
-                periods=len(hourly.Variables(0).ValuesAsNumpy()),
-                freq=pd.DateOffset(hours=1),
-            ),
-            "pm10": hourly.Variables(0).ValuesAsNumpy(),
-            "pm2_5": hourly.Variables(1).ValuesAsNumpy(),
-            "nitrogen_dioxide": hourly.Variables(2).ValuesAsNumpy(),
-            "sulphur_dioxide": hourly.Variables(3).ValuesAsNumpy(),
-            "ozone": hourly.Variables(4).ValuesAsNumpy(),
-            "carbon_monoxide": hourly.Variables(5).ValuesAsNumpy(),
-            "aqi": hourly.Variables(6).ValuesAsNumpy(),
-        }
+#         response = client.weather_api(url, params=params)[0]
+#         hourly = response.Hourly()
+#         hourly_data = {
+#             "time": pd.date_range(
+#                 start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+#                 periods=len(hourly.Variables(0).ValuesAsNumpy()),
+#                 freq=pd.DateOffset(hours=1),
+#             ),
+#             "pm10": hourly.Variables(0).ValuesAsNumpy(),
+#             "pm2_5": hourly.Variables(1).ValuesAsNumpy(),
+#             "nitrogen_dioxide": hourly.Variables(2).ValuesAsNumpy(),
+#             "sulphur_dioxide": hourly.Variables(3).ValuesAsNumpy(),
+#             "ozone": hourly.Variables(4).ValuesAsNumpy(),
+#             "carbon_monoxide": hourly.Variables(5).ValuesAsNumpy(),
+#             "aqi": hourly.Variables(6).ValuesAsNumpy(),
+#         }
         
-        df = pd.DataFrame(hourly_data)
-        return df
+#         df = pd.DataFrame(hourly_data)
+#         return df
         
-    except Exception as e:
-        raise
+#     except Exception as e:
+#         raise

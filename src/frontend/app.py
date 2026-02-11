@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-st.set_page_config(
+st.set
     page_title="Hyderabad AQI Predictor",
     page_icon="🌍",
     layout="wide",
@@ -1143,6 +1143,38 @@ def main():
     **AQI Predictor Dashboard**
     
     Real-time air quality predictions using machine learning.
+    
+    📍 Location: Hyderabad, Sindh
+                    \n
+    🔄 Updates: Hourly forecasts, daily model training
+                    \n
+    📊 Data Source: Open-Meteo API
+    """)
+    
+    if page == "🏠 Home":
+        render_home_page(selected_model)
+    elif page == "📊 Detailed Forecast":
+        render_detailed_forecast(selected_model)
+    elif page == "❤️ Health Guidance":
+        render_health_guidance(selected_model)
+    elif page == "📈 Historical Data":
+        render_historical_data(selected_model)
+    elif page == "⚠️ Alerts":
+        render_alerts(selected_model)
+    elif page == "🤖 Model Info":
+        render_model_info(selected_model)
+    
+    st.divider()
+    st.markdown("""
+        <div style='text-align: center; color: gray; font-size: 12px; padding: 20px;'>
+            <p>AQI Predictor Dashboard | Real-time Air Quality Predictions</p>
+            <p>Location: Hyderabad, Sindh (25.3548°N, 68.3711°E) | Last Updated: """ + datetime.now().strftime('%Y-%m-%d %H:%M') + """</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
+ air quality predictions using machine learning.
     
     📍 Location: Hyderabad, Sindh
                     \n

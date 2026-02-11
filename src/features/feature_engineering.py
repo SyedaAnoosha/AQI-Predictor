@@ -1,3 +1,4 @@
+# Feature engineering module for AQI Predictor project
 import pandas as pd
 import numpy as np
 from typing import Tuple
@@ -196,6 +197,14 @@ def process_features(
     if include_lags or include_aqi_change_rate:
         df = df.dropna()
     
+    return df
+
+def process_forecast_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare forecast-only features from weather data and time fields."""
+    df = handle_missing_values(df)
+    df = extract_time_features(df)
+    df = create_cyclical_features(df)
+    df = create_interaction_features(df)
     return df
 
 def prepare_for_training(df: pd.DataFrame, target_col: str = 'aqi') -> Tuple[pd.DataFrame, pd.Series]:

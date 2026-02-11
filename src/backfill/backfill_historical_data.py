@@ -1,8 +1,10 @@
+#Historical data backfill script for AQI Predictor project
 import sys, os
 from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 import argparse
+import time
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -20,8 +22,31 @@ def parse_arguments():
     return parser.parse_args()
 
 def fetch_data_batch(start_date: str, end_date: str, latitude: float, longitude: float, timezone: str) -> pd.DataFrame:
-    weather_df = fetch_historical_weather(start_date=start_date, end_date=end_date, latitude=latitude, longitude=longitude, timezone=timezone)
-    aqi_df = fetch_historical_aqi(start_date=start_date, end_date=end_date, latitude=latitude, longitude=longitude, timezone=timezone)
+    def _fetch_with_retry(fetch_fn, max_retries: int = 3, base_wait: int = 3, **kwargs):
+        for attempt in range(1, max_retries + 1):
+            try:
+                return fetch_fn(**kwargs)
+            except Exception:
+                if attempt >= max_retries:
+                    raise
+                time.sleep(base_wait * attempt)
+
+    weather_df = _fetch_with_retry(
+        fetch_historical_weather,
+        start_date=start_date,
+        end_date=end_date,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone
+    )
+    aqi_df = _fetch_with_retry(
+        fetch_historical_aqi,
+        start_date=start_date,
+        end_date=end_date,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone
+    )
     merged_df = pd.merge(weather_df, aqi_df, on='time', how='inner')
     return merged_df
 
@@ -45,7 +70,13 @@ def main():
     project, fs, fg = None, None, None
     if upload_to_hopsworks:
         project, fs = connect_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
-        fg = create_feature_group(fs, "aqi_features", version=1)
+        fg = create_feature_group(
+            fs,
+            name="aqi_historical_features",
+            version=1,
+            primary_key=["time"],
+            event_time="time",
+        )
     
     all_data = []
     current_date = start
@@ -69,6 +100,8 @@ def main():
         return
     
     combined_df = pd.concat(all_data, ignore_index=True)
+    combined_df = combined_df.drop_duplicates(subset=['time'], keep='last')
+    combined_df = combined_df.sort_values('time').reset_index(drop=True)
     print(f"Fetched {len(combined_df)} raw data rows")
     
     features_df = process_features(combined_df, include_lags=True, include_aqi_rate=False)

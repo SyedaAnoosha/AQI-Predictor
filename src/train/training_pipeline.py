@@ -1,3 +1,4 @@
+# Training pipeline for AQI Predictor project
 import os
 import sys
 import pandas as pd
@@ -48,9 +49,9 @@ def _save_json(payload: dict, path: str) -> None:
 
 def load_data_from_hopsworks(api_key, project_name):
     project, fs = connect_hopsworks(api_key, project_name)
-    fg = fs.get_feature_group(name="aqi_features", version=1)
+    fg = fs.get_feature_group(name="aqi_historical_features", version=1)
     fv = get_feature_view(fs, name="aqi_feature_view", version=1)
-    df = fg.read()
+    df = fg.read().sort_values('time').reset_index(drop=True)
     
     X, y = prepare_for_training(df, target_col='aqi')
     
@@ -277,6 +278,28 @@ def cache_daily_outputs(best_model_name: str, all_models_metrics: dict, predicti
         _save_json(payload, PREDICTION_CACHE_PATH)
 
 
+def save_metrics_table(all_models_metrics: dict) -> str:
+    docs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'docs'))
+    os.makedirs(docs_dir, exist_ok=True)
+
+    table_rows = []
+    for model_name, metrics in all_models_metrics.items():
+        row = {'model': model_name}
+        row.update(metrics)
+        table_rows.append(row)
+
+    metrics_df = pd.DataFrame(table_rows)
+    metrics_df = metrics_df.sort_values(by=['val_rmse', 'val_mae', 'test_rmse'], ascending=True)
+
+    csv_path = os.path.join(docs_dir, 'model_metrics_table.csv')
+    metrics_df.to_csv(csv_path, index=False)
+
+    print("\nModel metrics summary:")
+    print(metrics_df.to_string(index=False))
+
+    return csv_path
+
+
 def register_models_to_hopsworks(project, best_model_name, all_models_metrics, feature_names):
     try:
         mr = project.get_model_registry()
@@ -442,6 +465,9 @@ def run_training_and_inference():
             'test_mae': float(test_metrics_all[model_name]['mae']),
             'test_r2': float(test_metrics_all[model_name]['r2']),
         }
+
+    metrics_csv_path = save_metrics_table(all_models_metrics)
+    print(f"Saved model metrics table to {metrics_csv_path}")
 
     print(f"Saving model artifacts for best model: {best_model_name}")
     try:

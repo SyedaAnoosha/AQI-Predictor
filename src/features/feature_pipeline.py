@@ -1,7 +1,9 @@
+# Feature pipeline for AQI Predictor project
 import os
 import sys
 from datetime import datetime, timedelta
 import pandas as pd
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,10 +13,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from backend.api_client import (
     fetch_historical_weather, 
     fetch_historical_aqi,
-    fetch_weather_forecast,
-    fetch_aqi_forecast
+    fetch_weather_forecast
 )
-from features.feature_engineering import process_features
+from features.feature_engineering import process_features, process_forecast_features
 from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
 
 def get_yesterday_date() -> str:
@@ -46,15 +47,26 @@ def run_feature_pipeline():
         print(f"Incremental update: Fetching observed data from last {lookback_hours} hours")
         print(f"Date range: {start_str} to {end_str}")
         
-        weather_df = fetch_historical_weather(
+        def _fetch_with_retry(fetch_fn, max_retries: int = 3, base_wait: int = 3, **kwargs):
+            for attempt in range(1, max_retries + 1):
+                try:
+                    return fetch_fn(**kwargs)
+                except Exception:
+                    if attempt >= max_retries:
+                        raise
+                    time.sleep(base_wait * attempt)
+
+        weather_df = _fetch_with_retry(
+            fetch_historical_weather,
             start_date=start_str,
             end_date=end_str,
             latitude=latitude,
             longitude=longitude,
             timezone=timezone
         )
-        
-        aqi_df = fetch_historical_aqi(
+
+        aqi_df = _fetch_with_retry(
+            fetch_historical_aqi,
             start_date=start_str,
             end_date=end_str,
             latitude=latitude,
@@ -69,6 +81,7 @@ def run_feature_pipeline():
         
         if 'us_aqi' in combined_df.columns:
             combined_df = combined_df.rename(columns={'us_aqi': 'aqi'})
+
         
         print(f"Fetched {len(combined_df)} rows of observed data")
         
@@ -112,12 +125,40 @@ def run_feature_pipeline():
         
         fg = create_feature_group(
             fs,
-            name="aqi_features",
+            name="aqi_historical_features",
             version=1,
+            primary_key=["time"],
+            event_time="time",
         )
         
         insert_features(fg, new_data)
         print(f"Successfully inserted {len(new_data)} new rows")
+
+        try:
+            weather_forecast_df = _fetch_with_retry(
+                fetch_weather_forecast,
+                days=3,
+                latitude=latitude,
+                longitude=longitude,
+                timezone=timezone
+            )
+
+            weather_forecast_df = weather_forecast_df.drop_duplicates(subset=['time'], keep='last')
+            forecast_features = process_forecast_features(weather_forecast_df)
+            forecast_features['time'] = pd.to_datetime(forecast_features['time'], utc=True)
+
+            forecast_fg = create_feature_group(
+                fs,
+                name="weather_forecast_features",
+                version=1,
+                primary_key=["time"],
+                event_time="time",
+            )
+
+            insert_features(forecast_fg, forecast_features)
+            print(f"Inserted {len(forecast_features)} forecast weather rows")
+        except Exception as forecast_error:
+            print(f"Forecast feature update skipped: {forecast_error}")
         
         return True
         

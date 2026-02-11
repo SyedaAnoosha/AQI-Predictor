@@ -15,16 +15,25 @@ def connect_hopsworks(api_key: str, project_name: str = "aqi_predictor"):
 
 def create_feature_group(
     fs,
-    name: str = "aqi_features",
+    name: str = "aqi_historical_features",
     version: int = 1,
+    primary_key: Optional[list] = None,
+    event_time: Optional[str] = None,
+    online_enabled: bool = False,
 ):
     try:
+        if primary_key is None:
+            primary_key = ["time"]
+
+        if event_time is None:
+            event_time = "time"
+
         fg = fs.get_or_create_feature_group(
             name=name,
             version=version,
-            primary_key=["time"],
-            event_time="time",
-            online_enabled=False,
+            primary_key=primary_key,
+            event_time=event_time,
+            online_enabled=online_enabled,
         )
         return fg
     except Exception as e:
@@ -47,7 +56,7 @@ def get_feature_view(
 ):
     try:
         if query is None:
-            fg = fs.get_feature_group("aqi_features", version=1)
+            fg = fs.get_feature_group("aqi_historical_features", version=1)
             query = fg.select_all()
         
         fv = fs.get_or_create_feature_view(
@@ -70,7 +79,7 @@ def get_feature_view(
                 new_version = version + 1
             
             if query is None:
-                fg = fs.get_feature_group("aqi_features", version=1)
+                fg = fs.get_feature_group("aqi_historical_features", version=1)
                 query = fg.select_all()
             
             fv = fs.create_feature_view(
@@ -123,7 +132,7 @@ def create_training_dataset(
 
 def get_batch_data(fs, start_time: str, end_time: str) -> pd.DataFrame:
     try:
-        fg = fs.get_feature_group("aqi_features", version=1)
+        fg = fs.get_feature_group("aqi_historical_features", version=1)
         
         df = fg.filter(
             (fg.time >= start_time) & (fg.time <= end_time)
@@ -137,7 +146,7 @@ def get_batch_data(fs, start_time: str, end_time: str) -> pd.DataFrame:
 
 def get_latest_features(fs, n_hours: int = 72) -> pd.DataFrame:
     try:
-        fg = fs.get_feature_group("aqi_features", version=1)
+        fg = fs.get_feature_group("aqi_historical_features", version=1)
         
         end_time = datetime.now()
         start_time = end_time - pd.Timedelta(hours=n_hours)
@@ -148,6 +157,24 @@ def get_latest_features(fs, n_hours: int = 72) -> pd.DataFrame:
         
         return df
         
+    except Exception as e:
+        raise
+
+
+def get_forecast_features(
+    fs,
+    start_time: str,
+    end_time: str,
+) -> pd.DataFrame:
+    try:
+        fg = fs.get_feature_group("weather_forecast_features", version=1)
+
+        df = fg.filter(
+            (fg.time >= start_time) &
+            (fg.time <= end_time)
+        ).read()
+
+        return df
     except Exception as e:
         raise
 
