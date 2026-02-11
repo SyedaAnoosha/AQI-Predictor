@@ -16,7 +16,7 @@ from backend.api_client import (
     fetch_weather_forecast
 )
 from features.feature_engineering import process_features, process_forecast_features
-from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features, validate_connection
+from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
 
 def get_yesterday_date() -> str:
     yesterday = datetime.now() - timedelta(days=1)
@@ -102,15 +102,19 @@ def run_feature_pipeline():
         
         features_df['time'] = pd.to_datetime(features_df['time'], utc=True)
         
-        cutoff_time = pd.Timestamp(now - timedelta(hours=2)).tz_localize('UTC')
-        new_data = features_df[features_df['time'] >= cutoff_time].copy()
+        # cutoff_time = pd.Timestamp(now - timedelta(hours=2)).tz_localize('UTC')
+        # new_data = features_df[features_df['time'] >= cutoff_time].copy()
         
+        # if len(new_data) == 0:
+        #     print("No new timestamps to insert (all data already in feature store)")
+        #     return True
+        
+        new_data = features_df.copy()
+
         if len(new_data) == 0:
-            print("No new timestamps to insert (all data already in feature store)")
+            print("No data to insert")
             return True
-        
-        print(f"Inserting {len(new_data)} new rows (last 2 hours only)")
-        
+      
         float32_cols = [
             'pm10', 'pm2_5', 'nitrogen_dioxide', 'sulphur_dioxide', 'aqi',
             'pm2_5_lag_1h', 'pm2_5_lag_3h', 'pm2_5_lag_6h', 'pm2_5_lag_12h', 'pm2_5_lag_24h',
@@ -122,9 +126,6 @@ def run_feature_pipeline():
                 new_data[col] = new_data[col].astype('float32')
         
         project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
-        
-        # Validate connection before proceeding
-        validate_connection(fs)
         
         fg = create_feature_group(
             fs,

@@ -117,10 +117,10 @@ def load_model_from_disk(model_dir: str = None, model_name: str = "lightgbm") ->
         if model_dir is None:
             model_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models'))
         
-        candidate_model = f"{model_name}_model.pkl"
+        candidate_model = f"{model_name}.pkl"
         model_path = os.path.join(model_dir, candidate_model)
         if not os.path.exists(model_path):
-            model_path = os.path.join(model_dir, "lightgbm_model.pkl")
+            model_path = os.path.join(model_dir, "lightgbm.pkl")
 
         candidate_features = f"feature_names_{model_name}.json"
         features_path = os.path.join(model_dir, candidate_features if os.path.exists(os.path.join(model_dir, candidate_features)) else "feature_names.json")

@@ -80,22 +80,6 @@ def insert_features(fg, df: pd.DataFrame, retries: int = 3):
                 print(f"❌ Failed to insert {len(df)} rows after {retries} attempts")
                 raise
 
-
-def validate_connection(fs):
-    """
-    Validate Hopsworks connection by listing feature groups.
-    
-    Returns True if connection is healthy, raises exception otherwise.
-    """
-    try:
-        fgs = fs.list_feature_groups()
-        print(f"✅ Hopsworks connection healthy. Found {len(fgs)} feature groups")
-        return True
-    except Exception as e:
-        print(f"❌ Hopsworks connection failed: {str(e)}")
-        raise
-
-
 def get_feature_view(
     fs,
     name: str = "aqi_feature_view",
