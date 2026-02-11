@@ -20,6 +20,7 @@ st.set_page_config(
 
 API_BASE_URL = os.getenv("API_BASE_URL")
 
+
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -684,7 +685,7 @@ def render_detailed_forecast(selected_model: str):
     st.markdown("""
         <div class="header-title">
             <h1>📊 Detailed Forecast</h1>
-            <p>Hour-by-hour AQI predictions with confidence scores</p>
+            <p>Hour-by-hour AQI predictions</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -696,7 +697,6 @@ def render_detailed_forecast(selected_model: str):
             'Time': [pd.to_datetime(p['timestamp']).strftime('%a %m/%d %I:%M %p') for p in predictions],
             'Predicted AQI': [f"{p['predicted_aqi']:.0f}" for p in predictions],
             'Category': [p['aqi_category'] for p in predictions],
-            'Confidence': [f"{p.get('confidence', 0.85):.1%}" for p in predictions]
         })
         
         st.subheader("📋 Hourly Predictions Table")

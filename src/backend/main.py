@@ -6,7 +6,8 @@ Entry point for the AQI prediction API
 import os
 import sys
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import logging
@@ -66,7 +67,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "timestamp": datetime.now(),
+        "timestamp": datetime.now().isoformat(),
         "model_loaded": model_loaded,
         "feature_store_available": bool(hopsworks_api_key),
         "version": "1.0.0",
@@ -76,25 +77,31 @@ async def health_check():
 
 # Error handlers
 @app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
+async def http_exception_handler(request: Request, exc: HTTPException):
     """Custom HTTP exception handler"""
     logger.error(f"HTTP Exception: {exc.detail}")
-    return {
-        "status": "error",
-        "message": exc.detail,
-        "timestamp": datetime.now()
-    }
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "message": exc.detail,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
+async def general_exception_handler(request: Request, exc: Exception):
     """General exception handler"""
     logger.error(f"Unhandled Exception: {str(exc)}", exc_info=True)
-    return {
-        "status": "error",
-        "message": "Internal server error",
-        "timestamp": datetime.now()
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "message": "Internal server error",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 
 if __name__ == "__main__":

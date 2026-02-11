@@ -182,7 +182,13 @@ def generate_forecast(model_artifacts: Dict[str, Any],
     try:
         next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
         next_local_hour_utc = next_local_hour.tz_convert('UTC')
-        end_time_utc = next_local_hour_utc + pd.Timedelta(hours=hours + 24)
+        end_time_utc = next_local_hour_utc + pd.Timedelta(hours=hours)
+
+        def _to_utc(series: pd.Series, tz_name: str) -> pd.Series:
+            ts = pd.to_datetime(series)
+            if ts.dt.tz is None:
+                ts = ts.dt.tz_localize(tz_name)
+            return ts.dt.tz_convert('UTC')
 
         forecast_df = pd.DataFrame()
         hopsworks_api_key = os.getenv('HOPSWORKS_API_KEY')
@@ -198,13 +204,14 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                 forecast_df = pd.DataFrame()
 
         if forecast_df.empty:
+            forecast_days = int(np.ceil(hours / 24)) + 1
             weather_forecast_df = fetch_weather_forecast(
-                days=int(hours / 24) + 1,
+                days=forecast_days,
                 latitude=latitude,
                 longitude=longitude,
                 timezone=timezone
             )
-            forecast_df = weather_forecast_df.head(hours + 24)
+            forecast_df = weather_forecast_df.copy()
         
         end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
@@ -231,8 +238,16 @@ def generate_forecast(model_artifacts: Dict[str, Any],
         hist_combined['time'] = pd.to_datetime(hist_combined['time'], utc=True).dt.tz_convert(timezone)
 
         forecast_df = forecast_df.copy()
-        forecast_df['time'] = pd.to_datetime(forecast_df['time'], utc=True).dt.tz_convert(timezone)
+        forecast_df['time'] = _to_utc(forecast_df['time'], timezone)
         forecast_df = forecast_df.sort_values('time').reset_index(drop=True)
+
+        forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].copy()
+        forecast_df = forecast_df.head(hours)
+
+        if not forecast_df.empty:
+            first_local = forecast_df.iloc[0]['time'].tz_convert(timezone)
+            if first_local > next_local_hour:
+                forecast_df = pd.DataFrame()
 
         hist_features = process_features(
             hist_combined,
@@ -246,9 +261,27 @@ def generate_forecast(model_artifacts: Dict[str, Any],
 
         last_hist_row = hist_features.sort_values('time').iloc[-1]
 
-        forecast_features = process_forecast_features(forecast_df)
-        forecast_features = forecast_features[forecast_features['time'] >= next_local_hour]
-        forecast_features = forecast_features.head(hours)
+        if forecast_df.empty:
+            forecast_days = int(np.ceil(hours / 24)) + 1
+            weather_forecast_df = fetch_weather_forecast(
+                days=forecast_days,
+                latitude=latitude,
+                longitude=longitude,
+                timezone=timezone
+            )
+            forecast_df = weather_forecast_df.copy()
+            forecast_df['time'] = _to_utc(forecast_df['time'], timezone)
+            forecast_df = forecast_df.sort_values('time').reset_index(drop=True)
+            forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].copy()
+            forecast_df = forecast_df.head(hours)
+
+        if forecast_df.empty:
+            raise ValueError("No forecast rows available after aligning to next hour")
+
+        forecast_local = forecast_df.copy()
+        forecast_local['time'] = forecast_local['time'].dt.tz_convert(timezone)
+
+        forecast_features = process_forecast_features(forecast_local)
 
         lag_cols = [
             col for col in hist_features.columns
