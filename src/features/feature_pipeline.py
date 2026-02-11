@@ -135,15 +135,28 @@ def run_feature_pipeline():
         print(f"Successfully inserted {len(new_data)} new rows")
 
         try:
+            # Fetch 4 days to account for timezone offset (Asia/Karachi is UTC+5)
+            # This ensures we get full 72-hour forecast from current time
             weather_forecast_df = _fetch_with_retry(
                 fetch_weather_forecast,
-                days=3,
+                days=4,
                 latitude=latitude,
                 longitude=longitude,
                 timezone=timezone
             )
 
             weather_forecast_df = weather_forecast_df.drop_duplicates(subset=['time'], keep='last')
+            
+            # Filter to only future timestamps (remove any past data accidentally included)
+            now_utc = pd.Timestamp.now(tz='UTC')
+            weather_forecast_df['time'] = pd.to_datetime(weather_forecast_df['time'], utc=True)
+            weather_forecast_df = weather_forecast_df[weather_forecast_df['time'] > now_utc].copy()
+            
+            if len(weather_forecast_df) == 0:
+                print("⚠️  Warning: No future forecast data available after filtering")
+            else:
+                print(f"Forecast time range: {weather_forecast_df['time'].min()} → {weather_forecast_df['time'].max()}")
+            
             forecast_features = process_forecast_features(weather_forecast_df)
             forecast_features['time'] = pd.to_datetime(forecast_features['time'], utc=True)
 
