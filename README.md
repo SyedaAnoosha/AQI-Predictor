@@ -12,7 +12,7 @@
 
 Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML models, automated hourly data collection, and daily model retraining. Features interactive dashboard, health alerts, and SHAP explainability.
 
-**Live App**: [https://ten-pearls-aqi-predictor.streamlit.app/](https://hyderabad-pearls-aqi-predictor.streamlit.app/)
+**Live App**: https://hyderabad-pearls-aqi-predictor.streamlit.app/
 
 **Backend API (Render)**: https://aqi-predictor-4r2g.onrender.com
 
@@ -93,31 +93,45 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 ### Pipeline Flow
 
 **0. Historical Backfill** (One-time setup)
-   - **Script**: `scripts/backfill_historical_data.py`
-   - Fetches 2 years of historical data (weather + AQI)
-   - Creates initial training dataset (~17,520 records)
-   - Run manually once before first training
+   - **Script**: `src/backfill/backfill_historical_data.py`
+   - Fetches 2 years of historical data (weather + observed AQI)
+   - Deduplicates by `time`, sorts chronologically
+   - Generates engineered features with lag computation (~17,520 records)
+   - Stores in **`aqi_historical_features`** feature group (primary key: `time`)
+   - Run once before first training
 
 **1. Feature Pipeline** (Hourly at :42 past the hour)
-   - **Purpose**: Incremental updates with observed data only
-   - Fetches last 26 hours (covers 24h max lag + 2h new data)
-   - Processes features for all 26 hours (ensures lag values exist)
-   - Filters and inserts only last 2 hours of new timestamps
-   - Appends ~2-10 new rows to Hopsworks Feature Store
-   - Takes ~2-3 seconds per run
-   - **No forecast data** - only observed/historical AQI
+   - **Splits into two independent tasks:**
+   
+   **A. Historical Features (Training Data)**
+   - Fetches last 26 hours of observed data (weather + AQI)
+   - Processes all 26 hours to compute 24h lag features correctly
+   - Deduplicates by `time`, enforces chronological order
+   - Inserts **only last 2 hours** of new timestamps (~2-10 rows)
+   - Updates **`aqi_historical_features`** feature group
+   - No forecast contamination - only real observed data
+   
+   **B. Forecast Weather Features (Inference Only)**
+   - Fetches 3-day forecast weather (temperature, wind, etc.)
+   - Drops pollutants, computes time-based features only
+   - Stores in **`weather_forecast_features`** feature group
+   - Updated hourly for next 72h inference
 
 2. **Training Pipeline** (Daily @ 8:47 AM UTC)
-   - Load 2+ years of historical features from Hopsworks
+   - Load 2+ years from **`aqi_historical_features`** only
+   - Sort by `time` to enforce temporal order
    - Train 5 ML models with time-series cross-validation
    - Select best model (lowest validation RMSE)
+   - **Print & export metrics table → `docs/model_metrics_table.csv`**
    - Register all models to Hopsworks Model Registry
    - Generate 72h forecast cache
-   - Save artifacts to models/cache/
+   - Save artifacts to `models/cache/`
 
 3. **Inference** (On-Demand)
    - Load best model from registry
-   - Generate predictions
+   - Fetch last historical row → extract lag features
+   - Fetch forecast weather from `weather_forecast_features` (or fallback to API)
+   - Combine historical lags + forecast weather → predict
    - Serve via FastAPI
    - Display in Streamlit
 
@@ -131,12 +145,14 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 | **ML Frameworks** | Scikit-learn, XGBoost, LightGBM, TensorFlow/Keras |
 | **Backend** | FastAPI, Uvicorn |
 | **Frontend** | Streamlit, Plotly |
-| **Feature Store** | Hopsworks |
+| **Feature Store** | Hopsworks (2 separate FGs: historical + forecast) |
 | **Model Registry** | Hopsworks Model Registry |
-| **Automation** | GitHub Actions |
-| **APIs** | Open-Meteo (Weather & AQI) |
+| **Primary Keys** | Time-only (no lat/lon in PKs) |
+| **Automation** | GitHub Actions (hourly + daily) |
+| **APIs** | Open-Meteo (Weather + AQI forecasts, with retry logic) |
+| **Prediction Arch** | Historical Lags + Forecast Weather (no leakage) |
 | **Explainability** | SHAP |
-| **Deployment** | Docker-ready, Cloud-agnostic |
+| **Deployment** | Docker-ready, Render + Streamlit Cloud |
 
 ---
 
@@ -174,57 +190,78 @@ HOPSWORKS_API_KEY=your_hopsworks_api_key
 HOPSWORKS_PROJECT=your_project_name
 
 # Location (Hyderabad, Sindh, Pakistan)
-LATITUDE=25.3792
-LONGITUDE=68.3683
+# Note: Used for API calls only; feature PKs use time only (no lat/lon)
 TIMEZONE=Asia/Karachi
 
 # Backend API
 API_BASE_URL=http://localhost:8000/api
+MODEL_SELECTION_METRIC=val_rmse
+MODEL_SELECTION_SORT=min
 ```
 
 ### 5. Setup Hopsworks
 1. Create account at [Hopsworks.ai](https://www.hopsworks.ai/)
 2. Create new project
-3. Generate API key
+3. Generate API keyw
 4. Add to `.env` file
 
 ---
 
 ## 🚀 Usage
 
-### Step 1: Historical Backfill (First Time Only)
-```bash
-cd scripts
-python backfill_historical_data.py --start-date 2024-01-01 --end-date 2026-01-31
+### rc
+python backfill/backfill_historical_data.py --start-date 2024-01-01 --end-date 2026-01-31 --batch-days 90
 ```
 **What it does:**
 - Fetches 2 years of historical data in 90-day batches
-- Generates engineered features
-- Uploads to Hopsworks Feature Store
+- Includes retry logic (3 attempts, exponential backoff)
+- Merges weather + AQI by time, deduplicates, sorts
+- Generates engineered features (lags, cyclical, interactions)
+- Uploads to `aqi_historical_features` FG (PK: `time`)
+- Saves local CSV backup in `data/` folder
+- **Run this ONCE before starting automated pipelines**
+- Typical runtime: 5-15 minutes for 2+ years
 - Saves local CSV backup in data/ folder
 - **Run this ONCE before starting automated pipelines**
 
-### Step 2: Incremental Feature Pipeline
-```bash
-cd src
-python -m features.feature_pipeline
+### Stefeatures/feature_pipeline.py
 ```
-**What it does:**
-- Fetches last 26 hours of observed data (for lag feature context)
-- Processes all data to compute 24h lag features correctly
-- Inserts only last 2 hours of new timestamps (~2-10 rows)
-- Uses only observed AQI (no forecast contamination)
-- Takes 2-3 seconds
+**What it does (two independent streams):**
+
+**Historical Features (Training)**
+- Fetches last 26 hours of **observed** weather + AQI
+- Processes all 26 hours to compute lag features (~24h lookback)
+- Deduplicates by `time`, enforces chronological order
+- Inserts only last 2 hours of **new timestamps** (~2-10 rows)
+- Updates `aqi_historical_features` feature group (PK: `time`)
+- **Zero forecast contamination**
+
+**Forecast Weather Features (Inference)**
+- Fetches next 72 hours of weather forecasts only (no AQI)
+- Computes time-based + cyclical features (hour, day, interactions)
+- Updates `weather_forecast_features` feature group (PK: `time`)
+- Used at prediction time to augment historical lags
+
+**Features:**
+- Retry logic: 3 attempts with exponential backoff
+- Takes ~2-3 seconds total
 - Runs automatically hourly at :42 via GitHub Actions
 
 ### Step 3: Training Pipeline (Train Models)
 ```bash
 cd src
-python -m train.training_pipeline
+python train/training_pipeline.py
 ```
 **What it does:**
-- Trains 5 ML models on 2+ years of data
+- Fetches 2+ years from `aqi_historical_features` only
+- Sorts by `time` (enforces time-series integrity)
+- Trains 5 ML models with time-series cross-validation
 - Selects best model by validation RMSE
+- **Prints metrics table to console**
+- **Exports all models' metrics to `docs/model_metrics_table.csv`**
+- Registers all models to Hopsworks Model Registry
+- Generates 72h forecast cache
+- Saves best model artifacts to `models/` RMSE
 - Registers all models to Hopsworks
 - Generates 72h forecast cache
 - Saves artifacts to models/cache/
@@ -322,35 +359,47 @@ GET /shap-values?model=lightgbm
 GET /feature-importance?model=lightgbm
 ```
 
-#### 6. Get Historical Data
-```http
-GET /historical?days=30
-```
-
-#### 7. Get Model Metrics
-```http
-GET /model-metrics/all
-```
-
-**Full API docs:** `http://localhost:8000/docs` (Swagger UI)
-
----
-
-## 📂 Project Structure
-
-```
-AQI-Predictor/
-├── .github/
-│   └── workflows/
-│       ├── feature-pipeline.yml      # Hourly data collection
-│       └── training-pipeline.yml     # Daily model training
+#### 6. Get Historical Data(fetch + process)
+│       └── training-pipeline.yml     # Daily (train + register)
 ├── data/
-│   └── backfill_*.csv               # Historical data exports
-├── models/                          # placeholder
+│   └── backfill_*.csv               # Historical data snapshots
+├── docs/
+│   ├── model_metrics_table.csv      # All models' metrics (train/val/test)
+│   ├── AQI_PREDICTOR_REPORT.md
+│   └── SYSTEM_REPORT.md
+├── models/
+│   ├── lightgbm_model.pkl           # Best model
+│   ├── feature_names.json
+│   ├── metrics.json
+│   └── cache/
+│       ├── best_model_meta.json     # Selection metadata
+│       ├── all_model_metrics.json   # 5 models' metrics
+│       └── predictions_72h.json     # Latest 72h forecast
 ├── notebooks/
 │   └── eda.ipynb                    # Exploratory Data Analysis
-├── scripts/
-│   └── backfill_historical_data.py  # Historical data loader
+├── src/
+│   ├── backend/
+│   │   ├── api_client.py            # Open-Meteo API (with retry)
+│   │   ├── hopsworks_client.py      # Feature Store + Model Registry
+│   │   ├── main.py                  # FastAPI server
+│   │   ├── routes.py                # API endpoints
+│   │   ├── schemas.py               # Pydantic models
+│   │   └── services.py              # Prediction logic (historical + forecast)
+│   ├── features/
+│   │   ├── feature_engineering.py   # process_features() + process_forecast_features()
+│   │   └── feature_pipeline.py      # Hourly: fetch + split into 2 FGs
+│   ├── frontend/
+│   │   └── app.py                   # Streamlit dashboard
+│   ├── backfill/
+│   │   └── backfill_historical_data.py  # One-time historical load (with retry)
+│   └── train/
+│       └── training_pipeline.py     # Train 5 models + export metrics CSV
+├── tests/
+│   └── test_*.py                    # Unit tests (TODO)
+├── .env.example                     # Environment template
+├── .gitignore
+├── requirements.txt                 # Python dependencies
+├── render.yaml                      # Render deployment configder
 ├── src/
 │   ├── backend/
 │   │   ├── api_client.py            # Open-Meteo API wrapper
@@ -401,22 +450,20 @@ docker run -p 8000:8000 --env-file .env aqi-predictor
 docker run -p 8501:8501 --env-file .env aqi-predictor streamlit run src/frontend/app.py
 ```
 
-#### Cloud Platforms
-- **Render (Backend)**
-  - Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-  - Set environment variables: `HOPSWORKS_API_KEY`, `HOPSWORKS_PROJECT`, `LATITUDE`, `LONGITUDE`, `TIMEZONE`
-  - Runtime: Python 3.11 (`runtime.txt`)
-- **Streamlit Cloud (Frontend)**
-  - Main file: `src/frontend/app.py`
-  - Add secrets in Streamlit Cloud:
-    - `API_BASE_URL = "https://aqi-predictor-4r2g.onrender.com/api"`
-  - Reboot app after updating secrets
+#### Render (Backend)
+- Uses [render.yaml](render.yaml) for one-click deploy.
+- **Build command**: `pip insta
 
-Other platforms:
-- **AWS**: Deploy on EC2, ECS, or Lambda
-- **GCP**: Cloud Run or App Engine
-- **Azure**: App Service or Container Instances
-- **Heroku**: Procfile included
+**Note:** Metrics exported to `docs/model_metrics_table.csv` (generated after each training run)ll -r requirements.txt`
+- **Start command**: `cd src/backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
+- **Health check**: `/health`
+- **Required env vars**: `HOPSWORKS_API_KEY`, `HOPSWORKS_PROJECT`, `LATITUDE`, `LONGITUDE`, `TIMEZONE`
+
+#### Streamlit Cloud (Frontend)
+- **Main file**: `src/frontend/app.py`
+- **Secrets** (Settings → Secrets):
+  - `API_BASE_URL = "https://aqi-predictor-4r2g.onrender.com/api"`
+- Reboot the app after updating secrets.
 
 ---
 
