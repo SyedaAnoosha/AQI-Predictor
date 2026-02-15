@@ -2,7 +2,7 @@ name: Feature Pipeline
 
 on:
   schedule:
-    - cron: '42 * * * *'  # Run at :42 past every hour to avoid peak load
+    - cron: '42 * * * *' 
   workflow_dispatch: 
 
 jobs:
