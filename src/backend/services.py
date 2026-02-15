@@ -389,8 +389,10 @@ def check_alerts(predictions: List[PredictionItem], current_aqi: float = None) -
         alert_level = "Unhealthy"
     elif max_aqi >= 101:
         alert_level = "Unhealthy for Sensitive Groups"
+    elif max_aqi >= 51:
+        alert_level = "Moderate"
     else:
-        alert_level = "Good/Moderate"
+        alert_level = "Good"
     
     recommendation = get_health_recommendation(max_aqi).description
     
