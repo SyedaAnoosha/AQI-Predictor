@@ -241,7 +241,7 @@ def save_model_artifacts(model, scaler, feature_names, metrics, model_name, mode
     models_path = os.path.join(os.path.dirname(__file__), models_dir)
     os.makedirs(models_path, exist_ok=True)
     
-    model_filename = f'{model_name.lower().replace(" ", "_")}_model.pkl'
+    model_filename = f'{model_name.lower().replace(" ", "_")}.pkl'
     with open(os.path.join(models_path, model_filename), 'wb') as f:
         pickle.dump(model, f)
     
