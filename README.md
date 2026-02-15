@@ -209,7 +209,8 @@ MODEL_SELECTION_SORT=min
 
 ## 🚀 Usage
 
-### rc
+### Step 1: Backfill Historical Data
+```bash
 python backfill/backfill_historical_data.py --start-date 2024-01-01 --end-date 2026-01-31 --batch-days 90
 ```
 **What it does:**
@@ -221,10 +222,11 @@ python backfill/backfill_historical_data.py --start-date 2024-01-01 --end-date 2
 - Saves local CSV backup in `data/` folder
 - **Run this ONCE before starting automated pipelines**
 - Typical runtime: 5-15 minutes for 2+ years
-- Saves local CSV backup in data/ folder
-- **Run this ONCE before starting automated pipelines**
 
-### Stefeatures/feature_pipeline.py
+### Step 2: Feature Pipeline (Hourly Data Collection)
+```bash
+cd src
+python features/feature_pipeline.py
 ```
 **What it does (two independent streams):**
 
@@ -261,10 +263,7 @@ python train/training_pipeline.py
 - **Exports all models' metrics to `docs/model_metrics_table.csv`**
 - Registers all models to Hopsworks Model Registry
 - Generates 72h forecast cache
-- Saves best model artifacts to `models/` RMSE
-- Registers all models to Hopsworks
-- Generates 72h forecast cache
-- Saves artifacts to models/cache/
+- Saves artifacts to `models/cache/`
 - Runs daily at 8:47 AM UTC via GitHub Actions
 
 ### Start Backend API
@@ -358,22 +357,39 @@ GET /shap-values?model=lightgbm
 GET /feature-importance?model=lightgbm
 ```
 
-#### 6. Get Historical Data(fetch + process)
-│       └── training-pipeline.yml     # Daily (train + register)
+#### 6. Get Historical Data
+```http
+GET /historical-data?days=7&model=lightgbm
+```
+**Response:**
+```json
+{
+  "data": [
+    {
+      "timestamp": "2026-01-31T10:00:00Z",
+      "aqi": 78.5,
+      "pm2_5": 28.3,
+      "pm10": 62.1
+    }
+  ],
+  "total_records": 168
+}
+```
+
+---
+
+## 📁 Project Structure
+
+```
+AQI-Predictor/
+├── .github/
+│   └── workflows/
+│       ├── feature-pipeline.yml     # Hourly (fetch + process)
+│       └── training-pipeline.yml    # Daily (train + register)
 ├── data/
 │   └── backfill_*.csv               # Historical data snapshots
 ├── docs/
-│   ├── model_metrics_table.csv      # All models' metrics (train/val/test)
-│   ├── AQI_PREDICTOR_REPORT.md
-│   └── SYSTEM_REPORT.md
 ├── models/
-│   ├── lightgbm_model.pkl           # Best model
-│   ├── feature_names.json
-│   ├── metrics.json
-│   └── cache/
-│       ├── best_model_meta.json     # Selection metadata
-│       ├── all_model_metrics.json   # 5 models' metrics
-│       └── predictions_72h.json     # Latest 72h forecast
 ├── notebooks/
 │   └── eda.ipynb                    # Exploratory Data Analysis
 ├── src/
@@ -383,35 +399,14 @@ GET /feature-importance?model=lightgbm
 │   │   ├── main.py                  # FastAPI server
 │   │   ├── routes.py                # API endpoints
 │   │   ├── schemas.py               # Pydantic models
-│   │   └── services.py              # Prediction logic (historical + forecast)
-│   ├── features/
-│   │   ├── feature_engineering.py   # process_features() + process_forecast_features()
-│   │   └── feature_pipeline.py      # Hourly: fetch + split into 2 FGs
-│   ├── frontend/
-│   │   └── app.py                   # Streamlit dashboard
-│   ├── backfill/
-│   │   └── backfill_historical_data.py  # One-time historical load (with retry)
-│   └── train/
-│       └── training_pipeline.py     # Train 5 models + export metrics CSV
-├── tests/
-│   └── test_*.py                    # Unit tests (TODO)
-├── .env.example                     # Environment template
-├── .gitignore
-├── requirements.txt                 # Python dependencies
-├── render.yaml                      # Render deployment configder
-├── src/
-│   ├── backend/
-│   │   ├── api_client.py            # Open-Meteo API wrapper
-│   │   ├── hopsworks_client.py      # Feature Store client
-│   │   ├── main.py                  # FastAPI server
-│   │   ├── routes.py                # API endpoints
-│   │   ├── schemas.py               # Pydantic models
-│   │   └── services.py              # Business logic
+│   │   └── services.py              # Prediction logic
 │   ├── features/
 │   │   ├── feature_engineering.py   # Feature transformations
 │   │   └── feature_pipeline.py      # Hourly data collection
 │   ├── frontend/
 │   │   └── app.py                   # Streamlit dashboard
+│   ├── backfill/
+│   │   └── backfill_historical_data.py  # One-time historical load
 │   └── train/
 │       └── training_pipeline.py     # Model training
 ├── tests/
@@ -419,6 +414,7 @@ GET /feature-importance?model=lightgbm
 ├── .env.example                     # Environment template
 ├── .gitignore
 ├── requirements.txt                 # Python dependencies
+├── render.yaml                      # Render deployment config
 └── README.md
 ```
 
@@ -533,8 +529,7 @@ We welcome contributions! Please follow these steps:
 
 ## 📧 Contact
 
-**Project Maintainer:** Your Name  
-**Email:** your.email@example.com  
+**Project Maintainer:** Syeda Anoosha Iqtidar  
 **GitHub:** [@SyedaAnoosha](https://github.com/SyedaAnoosha)
 
 ---
