@@ -35,7 +35,7 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 ## ✨ Features
 
 ### 🎯 Core Capabilities
-- **72-Hour AQI Forecasting** - Hourly predictions with confidence scores
+- **72-Hour AQI Forecasting** - Hourly predictions
 - **5 ML Models** - Random Forest, XGBoost, LightGBM, ElasticNet, TensorFlow NN
 - **Automated Pipelines** - Hourly data collection, daily model training
 - **Real-time Predictions** - Sub-second inference via FastAPI backend
@@ -327,7 +327,6 @@ GET /predictions/next-3-days?model=lightgbm
       "timestamp": "2026-02-02T11:00:00Z",
       "predicted_aqi": 87.2,
       "aqi_category": "Moderate",
-      "confidence": 0.92
     }
   ]
 }
