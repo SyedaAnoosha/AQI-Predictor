@@ -95,7 +95,6 @@ class PredictionItem(BaseModel):
     timestamp: datetime = Field(..., description="Prediction timestamp")
     predicted_aqi: float = Field(..., ge=0, le=500, description="Predicted US AQI value (0-500)")
     aqi_category: str = Field(..., description="AQI category (Good, Moderate, Unhealthy, etc.)")
-    confidence: float = Field(..., ge=0, le=1, description="Model confidence (0-1)")
     
     weather_context: Optional[Dict[str, float]] = Field(
         None,
@@ -126,7 +125,6 @@ class PredictionResponse(BaseModel):
                         "timestamp": "2026-01-23T15:00:00Z",
                         "predicted_aqi": 75,
                         "aqi_category": "Moderate",
-                        "confidence": 0.92
                     }
                 ]
             }

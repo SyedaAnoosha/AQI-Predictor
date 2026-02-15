@@ -311,7 +311,6 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                 timestamp=row['time'],
                 predicted_aqi=aqi_value,
                 aqi_category=get_aqi_category(aqi_value),
-                confidence=0.85
             ))
         
         peak_aqi = max(predictions)
