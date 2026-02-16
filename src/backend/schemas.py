@@ -19,7 +19,6 @@ class AirQualityDataInput(BaseModel):
     pm2_5: float = Field(..., ge=0, description="PM2.5 concentration (μg/m³)")
     nitrogen_dioxide: Optional[float] = Field(None, ge=0, description="NO2 concentration")
     sulphur_dioxide: Optional[float] = Field(None, ge=0, description="SO2 concentration")
-    ozone: float = Field(..., ge=0, description="O3 concentration")
     carbon_monoxide: float = Field(..., ge=0, description="CO concentration")
     aqi: Optional[float] = Field(None, ge=0, le=500, description="US AQI (may not be present in forecasts)")
 
@@ -31,7 +30,6 @@ class ModelFeatureVector(BaseModel):
     wind_speed_10m: float
     wind_direction_10m: float
     precipitation: float
-    ozone: float
     
     hour: int = Field(..., ge=0, le=23)
     day_of_week: int = Field(..., ge=0, le=6)
@@ -182,7 +180,6 @@ class HistoricalDataItem(BaseModel):
     
     pm2_5: Optional[float] = Field(None, description="PM2.5 concentration (μg/m³)")
     pm10: Optional[float] = Field(None, description="PM10 concentration (μg/m³)")
-    ozone: Optional[float] = Field(None, description="Ozone concentration")
     carbon_monoxide: Optional[float] = Field(None, description="CO concentration")
     
     aqi_category: Optional[str] = Field(None, description="AQI category")

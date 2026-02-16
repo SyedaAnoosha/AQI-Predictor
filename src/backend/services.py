@@ -365,7 +365,6 @@ def get_current_aqi(model_artifacts: Dict[str, Any],
             "pm10": float(current_row.get('pm10', 0)),
             "nitrogen_dioxide": float(current_row.get('nitrogen_dioxide', 0)),
             "sulphur_dioxide": float(current_row.get('sulphur_dioxide', 0)),
-            "ozone": float(current_row.get('ozone', 0)),
             "carbon_monoxide": float(current_row.get('carbon_monoxide', 0)),
             "temperature": float(current_row.get('temperature_2m', 0)),
             "humidity": float(current_row.get('relative_humidity_2m', 0))

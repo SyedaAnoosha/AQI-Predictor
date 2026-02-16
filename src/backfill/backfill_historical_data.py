@@ -91,8 +91,8 @@ def main():
             batch_df = fetch_data_batch(batch_start_str, batch_end_str, LATITUDE, LONGITUDE, TIMEZONE)
             all_data.append(batch_df)
             batch_num += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Batch {batch_num} failed: {e}")
         
         current_date = batch_end
     

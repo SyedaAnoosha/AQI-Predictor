@@ -52,7 +52,18 @@ def load_data_from_hopsworks(api_key, project_name):
     fv = get_feature_view(fs, name="aqi_feature_view", version=1)
     df = fg.read().sort_values('time').reset_index(drop=True)
     
-    X, y = prepare_for_training(df, target_col='aqi')
+    # Apply feature engineering with causal imputation (safe for incremental pipelines)
+    # NOTE: This uses backward-only rolling median to prevent look-ahead bias
+    from src.features.feature_engineering import process_features as engineer_features
+    df_engineered = engineer_features(
+        df,
+        include_lags=True,
+        include_aqi_change_rate=True,
+        include_aqi_rate=False,
+        use_causal_imputation=True
+    )
+    
+    X, y = prepare_for_training(df_engineered, target_col='aqi')
     
     if 'season' in X.columns:
         X = pd.get_dummies(X, columns=['season'], prefix='season', drop_first=False)
@@ -92,8 +103,9 @@ def scale_features(X_train, X_val, X_test):
 
 def train_random_forest(X_train, y_train, X_val, y_val):
     model = RandomForestRegressor(
-        n_estimators=800, max_depth=20, min_samples_split=5,
-        min_samples_leaf=10, random_state=42, n_jobs=-1, verbose=0
+        n_estimators=600, max_depth=12, min_samples_split=10,
+        min_samples_leaf=20, max_features='sqrt',
+        random_state=42, n_jobs=-1, verbose=0
     )
     model.fit(X_train, y_train)
     y_pred = model.predict(X_val)
@@ -107,11 +119,19 @@ def train_random_forest(X_train, y_train, X_val, y_val):
 
 def train_xgboost(X_train, y_train, X_val, y_val):
     model = xgb.XGBRegressor(
-        n_estimators=800, learning_rate=0.02, max_depth=3, min_child_weight=10,
-        subsample=0.7, colsample_bytree=0.7, reg_alpha=0.3, reg_lambda=3.0,
-        gamma=0.25, random_state=42, n_jobs=-1
+        n_estimators=1000, learning_rate=0.02, max_depth=3, min_child_weight=20,
+        subsample=0.6, colsample_bytree=0.6, reg_alpha=0.8, reg_lambda=6.0,
+        gamma=0.4, eval_metric='rmse', random_state=42, n_jobs=-1,
     )
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=0)
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=0,
+        # callbacks=[
+        #     xgb.callback.EarlyStopping(rounds=50, save_best=True, maximize=False)
+        # ]
+
+    )
     y_pred = model.predict(X_val)
     
     rmse = np.sqrt(mean_squared_error(y_val, y_pred))
@@ -123,12 +143,19 @@ def train_xgboost(X_train, y_train, X_val, y_val):
 
 def train_lightgbm(X_train, y_train, X_val, y_val):
     model = lgb.LGBMRegressor(
-        n_estimators=1000, learning_rate=0.02, max_depth=10, num_leaves=32,
-        min_child_samples=20, subsample=0.7, colsample_bytree=0.6,
-        reg_alpha=1.0, reg_lambda=5.0, random_state=42, n_jobs=-1,
-        early_stopping_round=100, verbose=-1
+        n_estimators=800, learning_rate=0.02, max_depth=5, num_leaves=16,
+        min_child_samples=60, subsample=0.6, colsample_bytree=0.6,
+        reg_alpha=5.0, reg_lambda=15.0, min_split_gain=0.1,
+        random_state=42, n_jobs=-1, verbose=-1
     )
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], eval_metric='rmse')
+    model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],
+    eval_metric='rmse',
+    callbacks=[
+            lgb.early_stopping(stopping_rounds=50,),
+        ]
+    )
     y_pred = model.predict(X_val)
     
     rmse = np.sqrt(mean_squared_error(y_val, y_pred))
@@ -423,7 +450,9 @@ def run_training_and_inference():
         test_metrics_all[model_name] = {'rmse': test_rmse, 'mae': test_mae, 'r2': test_r2}
 
     if best_model_name in ['Random Forest', 'XGBoost', 'LightGBM']:
-        analyze_feature_importance(best_model, list(X_train.columns))
+        feature_importance_df = analyze_feature_importance(best_model, list(X_train.columns))
+        print("\nTop feature importances:")
+        print(feature_importance_df.head(20).to_string(index=False))
 
     save_scaler = scaler if best_model_name in ['ElasticNet', 'TensorFlow NN'] else None
 
@@ -441,6 +470,15 @@ def run_training_and_inference():
             'test_mae': float(test_metrics_all[model_name]['mae']),
             'test_r2': float(test_metrics_all[model_name]['r2']),
         }
+
+    metrics_table = pd.DataFrame.from_dict(all_models_metrics, orient='index')
+    metrics_table = metrics_table[[
+        'train_rmse', 'train_mae', 'train_r2',
+        'val_rmse', 'val_mae', 'val_r2',
+        'test_rmse', 'test_mae', 'test_r2'
+    ]]
+    print("\nTraining results (RMSE/MAE/R2):")
+    print(metrics_table.round(4).to_string())
 
     print(f"Saving model artifacts for best model: {best_model_name}")
     try:

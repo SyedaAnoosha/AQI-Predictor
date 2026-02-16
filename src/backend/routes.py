@@ -434,7 +434,6 @@ async def get_current_aqi_endpoint(model: str = Query(DEFAULT_MODEL, description
             "pm10": current_data.get('pm10', 0),
             "nitrogen_dioxide": current_data.get('nitrogen_dioxide', 0),
             "sulphur_dioxide": current_data.get('sulphur_dioxide', 0),
-            "ozone": current_data.get('ozone', 0),
             "carbon_monoxide": current_data.get('carbon_monoxide', 0),
             "temperature": current_data.get('temperature', 0),
             "humidity": current_data.get('humidity', 0)
