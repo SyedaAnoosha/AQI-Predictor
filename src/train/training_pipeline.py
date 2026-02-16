@@ -5,8 +5,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import json
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
@@ -277,29 +276,6 @@ def cache_daily_outputs(best_model_name: str, all_models_metrics: dict, predicti
         payload = prediction_response.model_dump() if hasattr(prediction_response, 'model_dump') else prediction_response.dict()
         _save_json(payload, PREDICTION_CACHE_PATH)
 
-
-def save_metrics_table(all_models_metrics: dict) -> str:
-    docs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'docs'))
-    os.makedirs(docs_dir, exist_ok=True)
-
-    table_rows = []
-    for model_name, metrics in all_models_metrics.items():
-        row = {'model': model_name}
-        row.update(metrics)
-        table_rows.append(row)
-
-    metrics_df = pd.DataFrame(table_rows)
-    metrics_df = metrics_df.sort_values(by=['val_rmse', 'val_mae', 'test_rmse'], ascending=True)
-
-    csv_path = os.path.join(docs_dir, 'model_metrics_table.csv')
-    metrics_df.to_csv(csv_path, index=False)
-
-    print("\nModel metrics summary:")
-    print(metrics_df.to_string(index=False))
-
-    return csv_path
-
-
 def register_models_to_hopsworks(project, best_model_name, all_models_metrics, feature_names):
     try:
         mr = project.get_model_registry()
@@ -465,9 +441,6 @@ def run_training_and_inference():
             'test_mae': float(test_metrics_all[model_name]['mae']),
             'test_r2': float(test_metrics_all[model_name]['r2']),
         }
-
-    metrics_csv_path = save_metrics_table(all_models_metrics)
-    print(f"Saved model metrics table to {metrics_csv_path}")
 
     print(f"Saving model artifacts for best model: {best_model_name}")
     try:
