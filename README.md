@@ -189,14 +189,8 @@ Create a `.env` file in the root directory:
 HOPSWORKS_API_KEY=your_hopsworks_api_key
 HOPSWORKS_PROJECT=your_project_name
 
-# Location (Hyderabad, Sindh, Pakistan)
-# Note: Used for API calls only; feature PKs use time only (no lat/lon)
-TIMEZONE=Asia/Karachi
-
 # Backend API
-API_BASE_URL=http://localhost:8000/api
-MODEL_SELECTION_METRIC=val_rmse
-MODEL_SELECTION_SORT=min
+API_BASE_URL=http://localhost:8000/api (or your backend server url)
 ```
 
 ### 5. Setup Hopsworks
