@@ -14,7 +14,7 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 
 **Live App**: https://hyderabad-pearls-aqi-predictor.streamlit.app/
 
-**Backend API (Render)**: https://aqi-predictor-4r2g.onrender.com
+**Backend API (Render)**: https://hyd-aqi-predictor.onrender.com
 
 ---
 
@@ -205,7 +205,7 @@ API_BASE_URL=http://localhost:8000/api (or your backend server url)
 
 ### Step 1: Backfill Historical Data
 ```bash
-python backfill/backfill_historical_data.py --start-date 2024-01-01 --end-date 2026-01-31 --batch-days 90
+python backfill/backfill_historical_data.py
 ```
 **What it does:**
 - Fetches 2 years of historical data in 90-day batches
@@ -213,9 +213,7 @@ python backfill/backfill_historical_data.py --start-date 2024-01-01 --end-date 2
 - Merges weather + AQI by time, deduplicates, sorts
 - Generates engineered features (lags, cyclical, interactions)
 - Uploads to `aqi_historical_features` FG (PK: `time`)
-- Saves local CSV backup in `data/` folder
 - **Run this ONCE before starting automated pipelines**
-- Typical runtime: 5-15 minutes for 2+ years
 
 ### Step 2: Feature Pipeline (Hourly Data Collection)
 ```bash
@@ -418,7 +416,7 @@ AQI-Predictor/
 
 ### Live Deployments
 - **Streamlit App**: https://hyderabad-pearls-aqi-predictor.streamlit.app/
-- **FastAPI Backend (Render)**: https://aqi-predictor-4r2g.onrender.com
+- **FastAPI Backend (Render)**: https://hyd-aqi-predictor.onrender.com
 
 ### GitHub Actions (Automated)
 Workflows are configured and run automatically:
@@ -451,7 +449,7 @@ docker run -p 8501:8501 --env-file .env aqi-predictor streamlit run src/frontend
 #### Streamlit Cloud (Frontend)
 - **Main file**: `src/frontend/app.py`
 - **Secrets** (Settings → Secrets):
-  - `API_BASE_URL = "https://aqi-predictor-4r2g.onrender.com/api"`
+  - `API_BASE_URL = "https://hyd-aqi-predictor.onrender.com"`
 - Reboot the app after updating secrets.
 
 ---
