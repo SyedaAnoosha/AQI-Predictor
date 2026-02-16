@@ -5,6 +5,7 @@ import json
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 import shap
@@ -26,6 +27,15 @@ from backend.schemas import (
     PredictionResponse, PredictionItem, AlertResponse, 
     get_aqi_category, get_health_recommendation
 )
+
+
+def _now_in_timezone(timezone: str) -> datetime:
+    """Return timezone-aware current time for consistent date boundaries."""
+    try:
+        return datetime.now(ZoneInfo(timezone))
+    except Exception:
+        # Fallback to naive local time if timezone is invalid
+        return datetime.now()
 
 def _resolve_feature_names(model: Any, feature_names_from_file: List[str]) -> List[str]:
     model_feature_names: List[str] = []
@@ -250,8 +260,9 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             forecast_df = weather_forecast_df.copy()
 
         # --- 2. Freshest historical data (archive API lags by ~1 day) -------
-        end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
+        now_local = _now_in_timezone(timezone)
+        end_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+        start_date = (now_local - timedelta(days=4)).strftime('%Y-%m-%d')
 
         hist_weather = fetch_historical_weather(
             start_date=start_date, end_date=end_date,
@@ -390,8 +401,9 @@ def get_current_aqi(model_artifacts: Dict[str, Any],
                    longitude: float = 68.3683,
                    timezone: str = "Asia/Karachi") -> Dict[str, Any]:
     try:
-        end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
+        now_local = _now_in_timezone(timezone)
+        end_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+        start_date = (now_local - timedelta(days=2)).strftime('%Y-%m-%d')
         
         weather_hist = fetch_historical_weather(start_date, end_date, latitude, longitude, timezone)
         aqi_hist = fetch_historical_aqi(start_date, end_date, latitude, longitude, timezone)
@@ -560,8 +572,9 @@ def get_historical_data(days: int = 7,
                        longitude: float = 68.3683,
                        timezone: str = "Asia/Karachi") -> pd.DataFrame:
     try:
-        end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=days+1)).strftime('%Y-%m-%d')
+        now_local = _now_in_timezone(timezone)
+        end_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+        start_date = (now_local - timedelta(days=days + 1)).strftime('%Y-%m-%d')
         
         weather_df = fetch_historical_weather(start_date, end_date, latitude, longitude, timezone)
         aqi_df = fetch_historical_aqi(start_date, end_date, latitude, longitude, timezone)
