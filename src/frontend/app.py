@@ -217,6 +217,24 @@ def get_aqi_category_name(aqi: float) -> str:
         return "hazardous"
 
 def get_readable_feature_name(feature: str) -> str:
+    feature_lower = feature.lower()
+    if '_lag_' in feature_lower:
+        base_name = feature_lower.split('_lag_')[0]
+        lag_suffix = feature_lower.split('_lag_')[1]
+        lag_label = lag_suffix.replace('h', 'h')
+        if lag_label.isdigit():
+            lag_label = f"{lag_label}h"
+        base_readable = {
+            'pm2_5': 'PM2.5',
+            'pm10': 'PM10',
+            'carbon_monoxide': 'Carbon Monoxide',
+            'nitrogen_dioxide': 'Nitrogen Dioxide',
+            'sulphur_dioxide': 'Sulphur Dioxide',
+            'temperature_2m': 'Temperature',
+            'pressure_msl': 'Pressure Msl',
+        }.get(base_name, base_name.replace('_', ' ').title())
+        return f"{base_readable} (Lag {lag_label})"
+
     mapping = {
         'pm2_5': 'PM2.5 Levels',
         'pm10': 'PM10 Levels',
@@ -238,7 +256,7 @@ def get_readable_feature_name(feature: str) -> str:
     }
     
     for key, readable in mapping.items():
-        if key in feature.lower():
+        if key in feature_lower:
             return readable
     
     return feature.replace('_', ' ').title()
