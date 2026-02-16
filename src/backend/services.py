@@ -359,7 +359,7 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             predictions_list.append(pred_aqi)
 
             prediction_items.append(PredictionItem(
-                timestamp=pd.Timestamp(row['time'].values[0]).to_pydatetime(),
+                timestamp=pd.Timestamp(row['time'].iloc[0]).to_pydatetime(),
                 predicted_aqi=pred_aqi,
                 aqi_category=get_aqi_category(pred_aqi),
             ))
@@ -381,14 +381,14 @@ def generate_forecast(model_artifacts: Dict[str, Any],
         predictions = np.array(predictions_list)
         peak_idx = int(np.argmax(predictions))
         peak_aqi = float(predictions[peak_idx])
-        peak_time = forecast_features.iloc[peak_idx]['time']
+        peak_time = pd.Timestamp(forecast_features.iloc[peak_idx]['time']).to_pydatetime()
 
         response = PredictionResponse(
             predictions=prediction_items,
             peak_aqi=peak_aqi,
             peak_time=peak_time,
             forecast_hours=hours,
-            generated_at=datetime.now(),
+            generated_at=_now_in_timezone(timezone),
         )
 
         return response
