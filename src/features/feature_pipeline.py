@@ -89,7 +89,8 @@ def run_feature_pipeline():
             combined_df,
             include_lags=True,
             include_aqi_rate=False,
-            include_aqi_change_rate=True
+            include_aqi_change_rate=True,
+            use_causal_imputation=True  # Backward-only rolling median (safe for incremental updates)
         )
         
         if features_df.isnull().sum().sum() > 0:

@@ -182,11 +182,38 @@ def make_predictions(model_artifacts: Dict[str, Any], features_df: pd.DataFrame)
     
     return predictions
 
+def _aqi_to_pm25(aqi: float) -> float:
+    """Estimate PM2.5 from US AQI using EPA breakpoints (inverse mapping)."""
+    breakpoints = [
+        (0,   50,   0.0,  12.0),
+        (51,  100,  12.1, 35.4),
+        (101, 150,  35.5, 55.4),
+        (151, 200,  55.5, 150.4),
+        (201, 300,  150.5, 250.4),
+        (301, 500,  250.5, 500.4),
+    ]
+    aqi = max(0.0, min(aqi, 500.0))
+    for aqi_lo, aqi_hi, pm_lo, pm_hi in breakpoints:
+        if aqi <= aqi_hi:
+            return pm_lo + (aqi - aqi_lo) * (pm_hi - pm_lo) / (aqi_hi - aqi_lo)
+    return 500.0
+
+
+def _aqi_to_co(aqi: float, last_co: float) -> float:
+    """Rough CO estimate: scale last known CO proportionally."""
+    return max(0.0, last_co)
+
+
 def generate_forecast(model_artifacts: Dict[str, Any], 
                      hours: int = 72, 
                      latitude: float = 25.3792,
                      longitude: float = 68.3683,
                      timezone: str = "Asia/Karachi") -> PredictionResponse:
+    """
+    Autoregressive forecast: predict one hour at a time, updating lag
+    features with each new prediction so that momentum / lag signals
+    evolve realistically across the forecast horizon.
+    """
     try:
         next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
         next_local_hour_utc = next_local_hour.tz_convert('UTC')
@@ -198,6 +225,7 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                 ts = ts.dt.tz_localize(tz_name)
             return ts.dt.tz_convert('UTC')
 
+        # --- 1. Weather forecast -----------------------------------------------
         forecast_df = pd.DataFrame()
         hopsworks_api_key = os.getenv('HOPSWORKS_API_KEY')
         if hopsworks_api_key:
@@ -220,68 +248,42 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                 timezone=timezone
             )
             forecast_df = weather_forecast_df.copy()
-        
+
+        # --- 2. Freshest historical data (archive API lags by ~1 day) -------
         end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=4)).strftime('%Y-%m-%d')
-        
-        hist_weather = fetch_historical_weather(
-            start_date=start_date,
-            end_date=end_date,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        hist_aqi = fetch_historical_aqi(
-            start_date=start_date,
-            end_date=end_date,
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        
-        hist_combined = pd.merge(hist_weather, hist_aqi, on='time', how='inner')
-        
-        hist_combined = hist_combined.sort_values('time').reset_index(drop=True)
-        hist_combined['time'] = pd.to_datetime(hist_combined['time'], utc=True).dt.tz_convert(timezone)
 
+        hist_weather = fetch_historical_weather(
+            start_date=start_date, end_date=end_date,
+            latitude=latitude, longitude=longitude, timezone=timezone,
+        )
+        hist_aqi = fetch_historical_aqi(
+            start_date=start_date, end_date=end_date,
+            latitude=latitude, longitude=longitude, timezone=timezone,
+        )
+
+        hist_combined = pd.merge(hist_weather, hist_aqi, on='time', how='inner')
+        hist_combined = hist_combined.sort_values('time').reset_index(drop=True)
+        hist_combined['time'] = pd.to_datetime(
+            hist_combined['time'], utc=True
+        ).dt.tz_convert(timezone)
+
+        # --- 3. Align forecast times -------------------------------------------
         forecast_df = forecast_df.copy()
         forecast_df['time'] = _to_utc(forecast_df['time'], timezone)
         forecast_df = forecast_df.sort_values('time').reset_index(drop=True)
-
-        forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].copy()
-        forecast_df = forecast_df.head(hours)
-
-        if not forecast_df.empty:
-            first_local = forecast_df.iloc[0]['time'].tz_convert(timezone)
-            if first_local > next_local_hour:
-                forecast_df = pd.DataFrame()
-
-        hist_features = process_features(
-            hist_combined,
-            include_lags=True,
-            include_aqi_change_rate=True,
-            include_aqi_rate=False
-        )
-
-        if hist_features.empty:
-            raise ValueError("No historical features available for lag computation")
-
-        last_hist_row = hist_features.sort_values('time').iloc[-1]
+        forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].head(hours)
 
         if forecast_df.empty:
             forecast_days = int(np.ceil(hours / 24)) + 1
             weather_forecast_df = fetch_weather_forecast(
-                days=forecast_days,
-                latitude=latitude,
-                longitude=longitude,
-                timezone=timezone
+                days=forecast_days, latitude=latitude,
+                longitude=longitude, timezone=timezone,
             )
             forecast_df = weather_forecast_df.copy()
             forecast_df['time'] = _to_utc(forecast_df['time'], timezone)
             forecast_df = forecast_df.sort_values('time').reset_index(drop=True)
-            forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].copy()
-            forecast_df = forecast_df.head(hours)
+            forecast_df = forecast_df[forecast_df['time'] >= next_local_hour_utc].head(hours)
 
         if forecast_df.empty:
             raise ValueError("No forecast rows available after aligning to next hour")
@@ -289,43 +291,97 @@ def generate_forecast(model_artifacts: Dict[str, Any],
         forecast_local = forecast_df.copy()
         forecast_local['time'] = forecast_local['time'].dt.tz_convert(timezone)
 
+        # --- 4. Build the rolling buffer for autoregressive prediction ----------
+        # Keep the last 26 rows of raw history (enough for 24h lags + 1h margin)
+        BUFFER_LEN = 26
+        hist_sorted = hist_combined.sort_values('time').reset_index(drop=True)
+        buffer_df = hist_sorted.tail(BUFFER_LEN).copy()
+        # Store AQI, PM2.5, CO, temperature, pressure as rolling arrays
+        aqi_buffer = list(buffer_df['aqi'].values)
+        pm25_buffer = list(buffer_df['pm2_5'].values)
+        co_buffer = list(buffer_df['carbon_monoxide'].values)
+        temp_buffer = list(buffer_df['temperature_2m'].values)
+        pres_buffer = list(buffer_df['pressure_msl'].values)
+        last_co = co_buffer[-1] if co_buffer else 300.0
+
+        # --- 5. Process per-row weather + time features -------------------------
         forecast_features = process_forecast_features(forecast_local)
 
-        lag_cols = [
-            col for col in hist_features.columns
-            if "_lag_" in col or col.startswith("aqi_change_") or col.startswith("aqi_rate_")
-        ]
-        for col in lag_cols:
-            forecast_features[col] = last_hist_row[col]
+        model = model_artifacts['model']
+        feature_names = model_artifacts['feature_names']
 
-        if forecast_features.empty:
-            raise ValueError("No forecast rows available after aligning to next local hour")
-        
-        predictions = make_predictions(model_artifacts, forecast_features)
-        
         prediction_items = []
-        for idx, (_, row) in enumerate(forecast_features.iterrows()):
-            aqi_value = float(predictions[idx])
-            
+        predictions_list = []
+
+        for idx in range(len(forecast_features)):
+            row = forecast_features.iloc[[idx]].copy()
+
+            # ---- Compute lag features from buffer ----
+            def _lag(buf, n):
+                return buf[-n] if len(buf) >= n else buf[0]
+
+            for lag in [1, 3, 6, 12, 24]:
+                row[f'pm2_5_lag_{lag}h'] = _lag(pm25_buffer, lag)
+                row[f'carbon_monoxide_lag_{lag}h'] = _lag(co_buffer, lag)
+
+            row['temperature_2m_lag_12h'] = _lag(temp_buffer, 12)
+            row['pressure_msl_lag_12h'] = _lag(pres_buffer, 12)
+
+            # ---- Compute AQI change features (using only past values) ----
+            aqi_prev = _lag(aqi_buffer, 1)
+            row['aqi_change_1h']  = aqi_prev - _lag(aqi_buffer, 2)
+            row['aqi_change_3h']  = aqi_prev - _lag(aqi_buffer, 4)
+            row['aqi_change_6h']  = aqi_prev - _lag(aqi_buffer, 7)
+            row['aqi_change_24h'] = aqi_prev - _lag(aqi_buffer, 25)
+            row['aqi_rate_1h']  = np.clip(row['aqi_change_1h'].values[0]  / 1.0, -10, 10)
+            row['aqi_rate_3h']  = np.clip(row['aqi_change_3h'].values[0]  / 3.0, -10, 10)
+            row['aqi_rate_24h'] = np.clip(row['aqi_change_24h'].values[0] / 24.0, -10, 10)
+
+            # ---- Align to model features & predict ----
+            X = prepare_for_prediction(row)
+            for feat in feature_names:
+                if feat not in X.columns:
+                    X[feat] = 0
+            X = X[feature_names].ffill().bfill().fillna(0)
+
+            pred_aqi = float(np.clip(model.predict(X)[0], 0, 500))
+            predictions_list.append(pred_aqi)
+
             prediction_items.append(PredictionItem(
-                timestamp=row['time'],
-                predicted_aqi=aqi_value,
-                aqi_category=get_aqi_category(aqi_value),
+                timestamp=pd.Timestamp(row['time'].values[0]).to_pydatetime(),
+                predicted_aqi=pred_aqi,
+                aqi_category=get_aqi_category(pred_aqi),
             ))
-        
-        peak_aqi = max(predictions)
-        peak_time = forecast_features.iloc[np.argmax(predictions)]['time']
-        
+
+            # ---- Update buffers for next step ----
+            aqi_buffer.append(pred_aqi)
+            pm25_buffer.append(_aqi_to_pm25(pred_aqi))
+            co_buffer.append(_aqi_to_co(pred_aqi, last_co))
+            # Weather values come from the forecast row
+            temp_buffer.append(
+                float(row['temperature_2m'].values[0])
+                if 'temperature_2m' in row.columns else temp_buffer[-1]
+            )
+            pres_buffer.append(
+                float(row['pressure_msl'].values[0])
+                if 'pressure_msl' in row.columns else pres_buffer[-1]
+            )
+
+        predictions = np.array(predictions_list)
+        peak_idx = int(np.argmax(predictions))
+        peak_aqi = float(predictions[peak_idx])
+        peak_time = forecast_features.iloc[peak_idx]['time']
+
         response = PredictionResponse(
             predictions=prediction_items,
-            peak_aqi=float(peak_aqi),
+            peak_aqi=peak_aqi,
             peak_time=peak_time,
             forecast_hours=hours,
-            generated_at=datetime.now()
+            generated_at=datetime.now(),
         )
-        
+
         return response
-        
+
     except Exception as e:
         raise
 
