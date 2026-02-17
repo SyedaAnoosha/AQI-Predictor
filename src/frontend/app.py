@@ -481,15 +481,6 @@ def fetch_health_guide(model_name: str):
     except Exception:
         return None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_actual_vs_predicted(model_name: str, days: int = 5):
-    try:
-        response = requests.get(f"{API_BASE_URL}/actual-vs-predicted", params={"model": model_name, "days": days})
-        response.raise_for_status()
-        return response.json()
-    except Exception:
-        return None
-
 def render_home_page(selected_model: str):
     st.markdown("""
         <div class="header-title">
@@ -1041,74 +1032,6 @@ def render_model_info(selected_model: str):
     
     st.divider()
     
-    st.subheader("📊 Actual vs Predicted AQI (Last 5 Days)")
-    st.info("🎯 Comparing real observed AQI values against model predictions to evaluate model accuracy")
-    
-    actual_vs_pred = fetch_actual_vs_predicted(selected_model, 5)
-    
-    if actual_vs_pred and 'data' in actual_vs_pred:
-        df_comparison = pd.DataFrame(actual_vs_pred['data'])
-        df_comparison['timestamp'] = pd.to_datetime(df_comparison['timestamp'])
-        
-        fig = go.Figure()
-        
-        # Get column names for actual and predicted - support different naming conventions
-        actual_col = 'actual_aqi' if 'actual_aqi' in df_comparison.columns else 'actual'
-        predicted_col = 'predicted_aqi' if 'predicted_aqi' in df_comparison.columns else 'predicted'
-        
-        fig.add_trace(go.Scatter(
-            x=df_comparison['timestamp'],
-            y=df_comparison[actual_col],
-            mode='lines+markers',
-            name='Actual AQI',
-            line=dict(color='#ff6666', width=2),
-            marker=dict(size=4),
-            hovertemplate='<b>Actual AQI</b><br>Time: %{x}<br>AQI: %{y:.1f}<extra></extra>'
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=df_comparison['timestamp'],
-            y=df_comparison[predicted_col],
-            mode='lines+markers',
-            name='Predicted AQI',
-            line=dict(color='#1f77b4', width=2),
-            marker=dict(size=4),
-            hovertemplate='<b>Predicted AQI</b><br>Time: %{x}<br>AQI: %{y:.1f}<extra></extra>'
-        ))
-        
-        fig.update_layout(
-            title='Actual vs Predicted AQI Values (Last 5 Days - 24 Hour Granularity)',
-            xaxis_title='Time (UTC)',
-            yaxis_title='AQI Value',
-            hovermode='x unified',
-            height=500,
-            template='plotly_white',
-            legend=dict(x=0.01, y=0.99)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show error metrics
-        if actual_col in df_comparison.columns and predicted_col in df_comparison.columns:
-            actual_vals = df_comparison[actual_col]
-            predicted_vals = df_comparison[predicted_col]
-            
-            mae = (actual_vals - predicted_vals).abs().mean()
-            rmse = ((actual_vals - predicted_vals) ** 2).mean() ** 0.5
-            mape = ((actual_vals - predicted_vals).abs() / actual_vals * 100).mean()
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Mean Absolute Error (MAE)", f"{mae:.2f}", delta="Lower is better")
-            with col2:
-                st.metric("Root Mean Square Error (RMSE)", f"{rmse:.2f}", delta="Lower is better")
-            with col3:
-                st.metric("Mean Absolute Percentage Error (MAPE)", f"{mape:.2f}%", delta="Lower is better")
-    else:
-        st.info("ℹ️ Actual vs Predicted data not available. Make sure the backend API endpoint is configured to provide historical comparison data.")
-    
-    st.divider()
-    
     st.subheader("📊 Feature Importance (SHAP)")
     st.info("🎯 **SHAP (SHapley Additive exPlanations)** - Game theory-based approach showing how each feature contributes to predictions")
     
@@ -1244,7 +1167,7 @@ def main():
         **Data Source:** Open-Meteo API  
 
         **Made By:** Syeda Anoosha Iqtidar  
-                    
+        
         *GitHub*: [SyedaAnoosha](https://github.com/SyedaAnoosha)
                     
     """)

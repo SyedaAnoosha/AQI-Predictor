@@ -28,10 +28,12 @@ from backend.schemas import (
     get_aqi_category, get_health_recommendation
 )
 
+
 def _now_in_timezone(timezone: str) -> datetime:
     try:
         return datetime.now(ZoneInfo(timezone))
     except Exception:
+        # Fallback to naive local time if timezone is invalid
         return datetime.now()
 
 def _resolve_feature_names(model: Any, feature_names_from_file: List[str]) -> List[str]:
@@ -214,7 +216,7 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                      latitude: float = 25.3792,
                      longitude: float = 68.3683,
                      timezone: str = "Asia/Karachi") -> PredictionResponse:
- 
+
     try:
         next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
         next_local_hour_utc = next_local_hour.tz_convert('UTC')
@@ -558,14 +560,14 @@ def get_shap_values(model_artifacts: Dict[str, Any],
             ]
         }
 
-def get_historical_data(days: int = 5,
+def get_historical_data(days: int = 7,
                        latitude: float = 25.3792,
                        longitude: float = 68.3683,
                        timezone: str = "Asia/Karachi") -> pd.DataFrame:
     try:
         now_local = _now_in_timezone(timezone)
-        end_date = now_local.strftime('%Y-%m-%d')
-        start_date = (now_local - timedelta(days=days)).strftime('%Y-%m-%d')
+        end_date = (now_local - timedelta(days=1)).strftime('%Y-%m-%d')
+        start_date = (now_local - timedelta(days=days + 1)).strftime('%Y-%m-%d')
         
         weather_df = fetch_historical_weather(start_date, end_date, latitude, longitude, timezone)
         aqi_df = fetch_historical_aqi(start_date, end_date, latitude, longitude, timezone)
@@ -582,112 +584,3 @@ def get_model_metrics(model_artifacts: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     
     return model_artifacts['metrics']
-
-def get_actual_vs_predicted(model_artifacts: Dict[str, Any],
-                            days: int = 5,
-                            latitude: float = 25.3792,
-                            longitude: float = 68.3683,
-                            timezone: str = "Asia/Karachi") -> pd.DataFrame:
-    try:
-        historical_df = get_historical_data(days, latitude, longitude, timezone)
-        
-        if historical_df.empty:
-            return pd.DataFrame()
-        
-        model = model_artifacts.get('model')
-        feature_names = model_artifacts.get('feature_names', [])
-        
-        if model is None:
-            return pd.DataFrame()
-        
-        feature_names = _resolve_feature_names(model, feature_names)
-        
-        historical_df = historical_df.sort_values('time').reset_index(drop=True)
-        
-        comparison_data = []
-        
-        for idx in range(len(historical_df)):
-            try:
-                current_row = historical_df.iloc[idx]
-                
-                actual_aqi = current_row.get('us_aqi') or current_row.get('aqi')
-                if pd.isna(actual_aqi):
-                    continue
-                
-                timestamp = current_row.get('time')
-                if isinstance(timestamp, str):
-                    timestamp = pd.to_datetime(timestamp)
-                
-                feature_vector = {}
-                
-                for feat in feature_names:
-                    if feat in current_row.index:
-                        val = current_row[feat]
-                        feature_vector[feat] = float(val) if not pd.isna(val) else 0.0
-                
-                for lag in [1, 3, 6, 12, 24]:
-                    lag_idx = idx - lag
-                    if lag_idx >= 0:
-                        lag_row = historical_df.iloc[lag_idx]
-                        
-                        if f'pm2_5_lag_{lag}h' in feature_names:
-                            feature_vector[f'pm2_5_lag_{lag}h'] = float(
-                                lag_row.get('pm2_5', 0.0) if not pd.isna(lag_row.get('pm2_5')) else 0.0
-                            )
-                        
-                        if f'carbon_monoxide_lag_{lag}h' in feature_names:
-                            feature_vector[f'carbon_monoxide_lag_{lag}h'] = float(
-                                lag_row.get('carbon_monoxide', 0.0) if not pd.isna(lag_row.get('carbon_monoxide')) else 0.0
-                            )
-                
-                if idx >= 12:
-                    lag12_row = historical_df.iloc[idx - 12]
-                    if 'temperature_2m_lag_12h' in feature_names:
-                        feature_vector['temperature_2m_lag_12h'] = float(
-                            lag12_row.get('temperature_2m', 0.0) if not pd.isna(lag12_row.get('temperature_2m')) else 0.0
-                        )
-                    if 'pressure_msl_lag_12h' in feature_names:
-                        feature_vector['pressure_msl_lag_12h'] = float(
-                            lag12_row.get('pressure_msl', 0.0) if not pd.isna(lag12_row.get('pressure_msl')) else 0.0
-                        )
-                
-                if idx >= 1:
-                    aqi_prev = historical_df.iloc[idx - 1].get('aqi') or historical_df.iloc[idx - 1].get('us_aqi')
-                    aqi_curr = actual_aqi
-                    
-                    if 'aqi_change_1h' in feature_names:
-                        change_1h = aqi_curr - aqi_prev if not pd.isna(aqi_prev) else 0.0
-                        feature_vector['aqi_change_1h'] = float(change_1h)
-                    
-                    if 'aqi_rate_1h' in feature_names:
-                        change_1h = aqi_curr - aqi_prev if not pd.isna(aqi_prev) else 0.0
-                        feature_vector['aqi_rate_1h'] = float(np.clip(change_1h / 1.0, -10, 10))
-                
-                for feat in feature_names:
-                    if feat not in feature_vector:
-                        feature_vector[feat] = 0.0
-                
-                X_pred = np.array([feature_vector.get(feat, 0.0) for feat in feature_names]).reshape(1, -1)
-                
-                predicted_aqi = float(model.predict(X_pred)[0])
-                
-                comparison_data.append({
-                    'timestamp': timestamp,
-                    'actual_aqi': float(actual_aqi),
-                    'predicted_aqi': predicted_aqi,
-                    'error': float(predicted_aqi - actual_aqi),
-                    'abs_error': abs(float(predicted_aqi - actual_aqi))
-                })
-                
-            except Exception as e:
-                continue
-        
-        if comparison_data:
-            comparison_df = pd.DataFrame(comparison_data)
-            comparison_df = comparison_df.sort_values('timestamp').reset_index(drop=True)
-            return comparison_df
-        else:
-            return pd.DataFrame()
-            
-    except Exception as e:
-        raise
