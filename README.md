@@ -29,8 +29,6 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 
 ### 🔬 Advanced Analytics
 - **SHAP Explainability** - Understand which features drive predictions
-- **Model Evaluation** - Actual vs Predicted AQI comparison graph (last 5 days)
-- **Error Metrics** - MAE, RMSE, MAPE for model accuracy assessment
 - **Health Alerts** - 4-level alert system (Normal → Hazard)
 - **Historical Analysis** - Trend visualization and pattern detection
 - **Feature Engineering** - 50+ engineered features (lags, interactions, cyclical)
@@ -355,40 +353,6 @@ GET /historical-data?days=7&model=lightgbm
   "total_records": 168
 }
 ```
-
-#### 7. Get Actual vs Predicted AQI Comparison
-```http
-GET /actual-vs-predicted?model=lightgbm&days=5
-```
-**Response:**
-```json
-{
-  "data": [
-    {
-      "timestamp": "2026-02-12T10:00:00Z",
-      "actual_aqi": 78.5,
-      "predicted_aqi": 81.2,
-      "error": 2.7,
-      "abs_error": 2.7
-    }
-  ],
-  "summary": {
-    "total_points": 120,
-    "mean_error": 1.45,
-    "mean_absolute_error": 2.34,
-    "rmse": 3.12,
-    "actual_mean": 85.3,
-    "predicted_mean": 86.75,
-    "actual_std": 12.4,
-    "predicted_std": 11.8
-  }
-}
-```
-**Use Case:** 
-- Model evaluation and accuracy assessment
-- Displays on Model Info page with interactive graph
-- Shows last 5 days with 24-hour granularity
-- Error metrics: MAE, RMSE, MAPE
 
 ---
 
