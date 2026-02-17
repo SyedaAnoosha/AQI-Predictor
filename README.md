@@ -138,7 +138,7 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 | **APIs** | Open-Meteo (Weather + AQI forecasts, with retry logic) |
 | **Prediction Arch** | Historical Lags + Forecast Weather (no leakage) |
 | **Explainability** | SHAP |
-| **Deployment** | Docker-ready, Render + Streamlit Cloud |
+| **Deployment** | Render + Streamlit Cloud |
 
 ---
 
@@ -411,23 +411,10 @@ Workflows are configured and run automatically:
 
 ### Manual Deployment
 
-#### Docker (Recommended)
-```bash
-# Build image
-docker build -t aqi-predictor .
-
-# Run backend
-docker run -p 8000:8000 --env-file .env aqi-predictor
-
-# Run frontend
-docker run -p 8501:8501 --env-file .env aqi-predictor streamlit run src/frontend/app.py
-```
-
 #### Render (Backend)
 - Uses [render.yaml](render.yaml) for one-click deploy.
 - **Build command**: `pip insta
 
-**Note:** Metrics exported to `docs/model_metrics_table.csv` (generated after each training run)ll -r requirements.txt`
 - **Start command**: `cd src/backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
 - **Health check**: `/health`
 - **Required env vars**: `HOPSWORKS_API_KEY`, `HOPSWORKS_PROJECT`, `LATITUDE`, `LONGITUDE`, `TIMEZONE`
