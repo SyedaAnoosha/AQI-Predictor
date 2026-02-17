@@ -16,7 +16,7 @@ load_dotenv(dotenv_path=env_path)
 from backend.services import (
     load_model_artifacts, generate_forecast, check_alerts,
     get_feature_importance, get_historical_data, get_model_metrics,
-    get_current_aqi, get_shap_values
+    get_current_aqi, get_shap_values, get_actual_vs_predicted
 )
 from backend.hopsworks_client import (
     connect_hopsworks, get_all_model_metrics
@@ -275,6 +275,78 @@ async def get_historical_data_endpoint(days: int = 7):
     except Exception as e:
         logger.error(f"Error retrieving historical data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve historical data: {str(e)}")
+
+
+@router.get(
+    "/actual-vs-predicted",
+    summary="Get actual vs predicted AQI comparison",
+    tags=["Model Evaluation"]
+)
+async def get_actual_vs_predicted_endpoint(
+    model: str = Query(DEFAULT_MODEL, description="Model name to use"),
+    days: int = Query(7, description="Number of days to compare (1-365)")
+):
+    """
+    Returns historical actual AQI values compared with model predictions
+    for model evaluation and accuracy assessment.
+    """
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="Days must be between 1 and 365")
+    
+    try:
+        artifacts = _get_model(model)
+        comparison_df = get_actual_vs_predicted(
+            artifacts,
+            days=days,
+            latitude=LATITUDE,
+            longitude=LONGITUDE,
+            timezone=TIMEZONE
+        )
+        
+        if comparison_df.empty:
+            return {
+                "data": [],
+                "summary": {
+                    "total_points": 0,
+                    "mean_error": 0,
+                    "mean_absolute_error": 0,
+                    "rmse": 0
+                }
+            }
+        
+        # Convert to serializable format
+        comparison_records = []
+        for idx, row in comparison_df.iterrows():
+            comparison_records.append({
+                "timestamp": row['timestamp'].isoformat() if hasattr(row['timestamp'], 'isoformat') else str(row['timestamp']),
+                "actual_aqi": float(row['actual_aqi']),
+                "predicted_aqi": float(row['predicted_aqi']),
+                "error": float(row['error']),
+                "abs_error": float(row['abs_error'])
+            })
+        
+        # Calculate summary statistics
+        summary_stats = {
+            "total_points": len(comparison_df),
+            "mean_error": float(comparison_df['error'].mean()),
+            "mean_absolute_error": float(comparison_df['abs_error'].mean()),
+            "rmse": float((comparison_df['error'] ** 2).mean() ** 0.5),
+            "actual_mean": float(comparison_df['actual_aqi'].mean()),
+            "predicted_mean": float(comparison_df['predicted_aqi'].mean()),
+            "actual_std": float(comparison_df['actual_aqi'].std()),
+            "predicted_std": float(comparison_df['predicted_aqi'].std())
+        }
+        
+        response = {
+            "data": comparison_records,
+            "summary": summary_stats
+        }
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error retrieving actual vs predicted data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve actual vs predicted data: {str(e)}")
 
 
 @router.get(
