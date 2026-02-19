@@ -428,11 +428,30 @@ def get_current_aqi(model_artifacts: Dict[str, Any],
             "sulphur_dioxide": float(current_row.get('sulphur_dioxide', 0)),
             "carbon_monoxide": float(current_row.get('carbon_monoxide', 0)),
             "temperature": float(current_row.get('temperature_2m', 0)),
-            "humidity": float(current_row.get('relative_humidity_2m', 0))
+            "humidity": float(current_row.get('relative_humidity_2m', 0)),
+            "wind_speed": float(current_row.get('wind_speed_10m', 0)),
+            "wind_direction": float(current_row.get('wind_direction_10m', 0)),
+            "pressure": float(current_row.get('pressure_msl', 0)),
+            "precipitation": float(current_row.get('precipitation', 0))
         }
         
     except Exception as e:
         raise
+
+def _get_alert_level(aqi_value: float) -> str:
+    """Determine alert level based on AQI value."""
+    if aqi_value >= 301:
+        return "Hazardous"
+    elif aqi_value >= 201:
+        return "Very Unhealthy"
+    elif aqi_value >= 151:
+        return "Unhealthy"
+    elif aqi_value >= 101:
+        return "Unhealthy for Sensitive Groups"
+    elif aqi_value >= 51:
+        return "Moderate"
+    else:
+        return "Good"
 
 def check_alerts(predictions: List[PredictionItem], current_aqi: float = None) -> AlertResponse:
     max_aqi = max([p.predicted_aqi for p in predictions])
@@ -441,29 +460,18 @@ def check_alerts(predictions: List[PredictionItem], current_aqi: float = None) -
     if current_aqi is None:
         current_aqi = predictions[0].predicted_aqi if predictions else max_aqi
     
-    if max_aqi >= 301:
-        alert_level = "Hazardous"
-    elif max_aqi >= 201:
-        alert_level = "Very Unhealthy"
-    elif max_aqi >= 151:
-        alert_level = "Unhealthy"
-    elif max_aqi >= 101:
-        alert_level = "Unhealthy for Sensitive Groups"
-    elif max_aqi >= 51:
-        alert_level = "Moderate"
-    else:
-        alert_level = "Good"
+    alert_level = _get_alert_level(current_aqi)
     
-    recommendation = get_health_recommendation(max_aqi).description
+    recommendation = get_health_recommendation(current_aqi).description
     
     affected_groups = []
-    if max_aqi >= 101:
+    if current_aqi >= 101:
         affected_groups.append("children")
-    if max_aqi >= 101:
+    if current_aqi >= 101:
         affected_groups.append("elderly")
-    if max_aqi >= 151:
+    if current_aqi >= 151:
         affected_groups.append("asthma patients")
-    if max_aqi >= 201:
+    if current_aqi >= 201:
         affected_groups.append("general public")
     
     return AlertResponse(
