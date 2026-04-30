@@ -22,6 +22,7 @@ warnings.filterwarnings('ignore')
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 from src.backend.hopsworks_client import connect_hopsworks, get_feature_view
+from src.backend.mongo_client import connect_mongo, register_models_to_mongo
 from src.backend.services import generate_forecast
 from src.features.feature_engineering import prepare_for_training
 
@@ -47,10 +48,26 @@ def _save_json(payload: dict, path: str) -> None:
 
 
 def load_data_from_hopsworks(api_key, project_name):
-    project, fs = connect_hopsworks(api_key, project_name)
-    fg = fs.get_feature_group(name="aqi_historical_features", version=1)
-    fv = get_feature_view(fs, name="aqi_feature_view", version=1)
-    df = fg.read().sort_values('time').reset_index(drop=True)
+    project = None
+    df = None
+    try:
+        project, fs = connect_hopsworks(api_key, project_name)
+        fg = fs.get_feature_group(name="aqi_historical_features", version=1)
+        fv = get_feature_view(fs, name="aqi_feature_view", version=1)
+        df = fg.read().sort_values('time').reset_index(drop=True)
+    except Exception:
+        # Hopsworks failed — try MongoDB fallback
+        mongo_uri = os.getenv('MONGO_URI')
+        if not mongo_uri:
+            raise
+        client, db = connect_mongo(mongo_uri)
+        rows = list(db['aqi_historical_features'].find().sort('time', 1))
+        df = pd.DataFrame(rows)
+        if '_id' in df.columns:
+            df = df.drop(columns=['_id'])
+        if 'time' in df.columns:
+            df['time'] = pd.to_datetime(df['time'], utc=True)
+        df = df.sort_values('time').reset_index(drop=True)
     
     # Apply feature engineering with causal imputation (safe for incremental pipelines)
     # NOTE: This uses backward-only rolling median to prevent look-ahead bias
@@ -68,7 +85,23 @@ def load_data_from_hopsworks(api_key, project_name):
     if 'season' in X.columns:
         X = pd.get_dummies(X, columns=['season'], prefix='season', drop_first=False)
     
-    return X, y, df, project
+    # project may be undefined when using Mongo fallback
+    return X, y, df, (project if 'project' in locals() else None)
+
+
+def _sanitize_feature_matrix(X: pd.DataFrame) -> pd.DataFrame:
+    """Remove Mongo metadata and any non-numeric columns before scaling/training."""
+    X = X.copy()
+
+    mongo_metadata_columns = [col for col in ['_id'] if col in X.columns]
+    if mongo_metadata_columns:
+        X = X.drop(columns=mongo_metadata_columns)
+
+    non_numeric_columns = [col for col in X.columns if not pd.api.types.is_numeric_dtype(X[col])]
+    if non_numeric_columns:
+        X = X.drop(columns=non_numeric_columns)
+
+    return X
 
 
 def create_time_series_splits(X, y, n_splits=5, test_size=0.10):
@@ -341,21 +374,43 @@ def register_models_to_hopsworks(project, best_model_name, all_models_metrics, f
         return None
 
 
+def register_models_to_mongo_if_available(mongo_uri, best_model_name, all_models_metrics, feature_names):
+    if not mongo_uri:
+        return None
+
+    try:
+        client, db = connect_mongo(mongo_uri)
+        register_models_to_mongo(
+            db,
+            best_model_name=best_model_name,
+            all_models_metrics=all_models_metrics,
+            feature_names=feature_names,
+        )
+        print("Models registered to MongoDB Atlas model_registry collection")
+        return db
+    except Exception as e:
+        print(f"ERROR registering models to MongoDB: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def run_training_and_inference():
     from dotenv import load_dotenv
     load_dotenv()
 
     HOPSWORKS_API_KEY = os.getenv('HOPSWORKS_API_KEY')
     HOPSWORKS_PROJECT = os.getenv('HOPSWORKS_PROJECT')
+    MONGO_URI = os.getenv('MONGO_URI')
 
-    if not HOPSWORKS_API_KEY or not HOPSWORKS_PROJECT:
-        print("ERROR: HOPSWORKS_API_KEY or HOPSWORKS_PROJECT not set")
+    if not HOPSWORKS_API_KEY and not MONGO_URI:
+        print("ERROR: Set either HOPSWORKS_API_KEY/HOPSWORKS_PROJECT or MONGO_URI")
         return
 
     try:
         X, y, df, project = load_data_from_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
     except Exception as e:
-        print(f"ERROR loading data from Hopsworks: {e}")
+        print(f"ERROR loading training data: {e}")
         import traceback
         traceback.print_exc()
         return
@@ -380,6 +435,10 @@ def run_training_and_inference():
         X_train = X_train.drop(columns=cols_to_drop)
         X_val = X_val.drop(columns=cols_to_drop)
         X_test = X_test.drop(columns=cols_to_drop)
+
+    X_train = _sanitize_feature_matrix(X_train)
+    X_val = _sanitize_feature_matrix(X_val)
+    X_test = _sanitize_feature_matrix(X_test)
 
     X_train_scaled, X_val_scaled, X_test_scaled, scaler = scale_features(X_train, X_val, X_test)
 
@@ -490,8 +549,12 @@ def run_training_and_inference():
         import traceback
         traceback.print_exc()
 
-    print("Registering models to Hopsworks...")
-    register_models_to_hopsworks(project, best_model_name, all_models_metrics, list(X_train.columns))
+    if project is not None:
+        print("Registering models to Hopsworks...")
+        register_models_to_hopsworks(project, best_model_name, all_models_metrics, list(X_train.columns))
+    else:
+        print("Registering models to MongoDB Atlas...")
+        register_models_to_mongo_if_available(MONGO_URI, best_model_name, all_models_metrics, list(X_train.columns))
 
     best_artifacts = {
         'model': best_model,

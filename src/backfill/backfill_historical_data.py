@@ -11,6 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from backend.api_client import fetch_historical_weather, fetch_historical_aqi
 from features.feature_engineering import process_features
 from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
+from backend.mongo_client import connect_mongo, insert_features as mongo_insert_features
 
 load_dotenv()
 
@@ -69,14 +70,27 @@ def main():
     
     project, fs, fg = None, None, None
     if upload_to_hopsworks:
-        project, fs = connect_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
-        fg = create_feature_group(
-            fs,
-            name="aqi_historical_features",
-            version=1,
-            primary_key=["time"],
-            event_time="time",
-        )
+        try:
+            project, fs = connect_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
+            fg = create_feature_group(
+                fs,
+                name="aqi_historical_features",
+                version=1,
+                primary_key=["time"],
+                event_time="time",
+            )
+        except Exception:
+            project, fs, fg = None, None, None
+
+    # Prepare mongo connection if hopsworks not available or as fallback
+    mongo_uri = os.getenv('MONGO_URI')
+    mongo_client = None
+    mongo_db = None
+    if mongo_uri:
+        try:
+            mongo_client, mongo_db = connect_mongo(mongo_uri)
+        except Exception:
+            mongo_client, mongo_db = None, None
     
     all_data = []
     current_date = start
@@ -107,11 +121,21 @@ def main():
     features_df = process_features(combined_df, include_lags=True, include_aqi_rate=False)
     print(f"Generated {len(features_df)} feature rows after processing (after lag computation and NaN removal)")
     
+    # Try Hopsworks insert first (if available), otherwise insert into MongoDB
+    inserted = False
     if upload_to_hopsworks and fs and fg:
         try:
             insert_features(fg, features_df)
+            inserted = True
         except Exception:
-            pass
+            inserted = False
+
+    if not inserted and mongo_db is not None:
+        try:
+            mongo_insert_features(mongo_db, 'aqi_historical_features', features_df)
+            print(f"Inserted {len(features_df)} rows into MongoDB collection 'aqi_historical_features'")
+        except Exception as me:
+            print(f"Failed to insert into MongoDB: {me}")
 
 if __name__ == "__main__":
     main()

@@ -9,3 +9,6 @@ __init__.py
 models/*.json
 models/cache/
 models/*.pkl
+
+
+node_modules/

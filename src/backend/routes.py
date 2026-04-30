@@ -21,6 +21,7 @@ from backend.services import (
 from backend.hopsworks_client import (
     connect_hopsworks, get_all_model_metrics
 )
+from backend.mongo_client import connect_mongo
 from backend.schemas import (
     PredictionResponse, AlertResponse
 )
@@ -374,8 +375,25 @@ async def get_all_model_metrics_endpoint():
                 if not metrics_payload:
                     metrics_payload = _load_cached_metrics()
             except Exception as e:
-                logger.warning(f"Could not fetch from Hopsworks: {e}, falling back to cache")
-                metrics_payload = _load_cached_metrics()
+                logger.warning(f"Could not fetch from Hopsworks: {e}, falling back to cache/mongo")
+                # Try MongoDB model registry as secondary fallback
+                mongo_uri = os.getenv('MONGO_URI')
+                metrics_payload = {}
+                if mongo_uri:
+                    try:
+                        client, db = connect_mongo(mongo_uri)
+                        docs = list(db['model_registry'].find())
+                        for d in docs:
+                            name = d.get('name') or d.get('model_name')
+                            if not name:
+                                continue
+                            metrics_payload[name] = d.get('metrics', {}) or {}
+                        if not metrics_payload:
+                            metrics_payload = _load_cached_metrics()
+                    except Exception:
+                        metrics_payload = _load_cached_metrics()
+                else:
+                    metrics_payload = _load_cached_metrics()
         
         available = list(metrics_payload.keys()) if metrics_payload else AVAILABLE_MODELS
 

@@ -17,6 +17,7 @@ from backend.api_client import (
 )
 from features.feature_engineering import process_features, process_forecast_features
 from backend.hopsworks_client import connect_hopsworks, create_feature_group, insert_features
+from backend.mongo_client import connect_mongo, insert_features as mongo_insert_features
 
 def get_yesterday_date() -> str:
     yesterday = datetime.now() - timedelta(days=1)
@@ -34,8 +35,9 @@ def run_feature_pipeline():
         hopsworks_api_key = os.getenv("HOPSWORKS_API_KEY")
         hopsworks_project = os.getenv("HOPSWORKS_PROJECT")
         
-        if not hopsworks_api_key:
-            raise ValueError("HOPSWORKS_API_KEY not set in environment")
+        mongo_uri = os.getenv('MONGO_URI')
+        if not hopsworks_api_key and not mongo_uri:
+            raise ValueError("HOPSWORKS_API_KEY or MONGO_URI must be set in environment")
         
         now = datetime.now()
         lookback_hours = 26
@@ -126,18 +128,31 @@ def run_feature_pipeline():
             if col in new_data.columns:
                 new_data[col] = new_data[col].astype('float32')
         
-        project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
-        
-        fg = create_feature_group(
-            fs,
-            name="aqi_historical_features",
-            version=1,
-            primary_key=["time"],
-            event_time="time",
-        )
-        
-        insert_features(fg, new_data)
-        print(f"Successfully inserted {len(new_data)} new rows")
+        project = None
+        fs = None
+        fg = None
+        if hopsworks_api_key:
+            try:
+                project, fs = connect_hopsworks(hopsworks_api_key, hopsworks_project)
+                fg = create_feature_group(
+                    fs,
+                    name="aqi_historical_features",
+                    version=1,
+                    primary_key=["time"],
+                    event_time="time",
+                )
+                insert_features(fg, new_data)
+                print(f"Successfully inserted {len(new_data)} new rows to Hopsworks")
+            except Exception as e:
+                print(f"Hopsworks insert failed: {e}")
+
+        if (fg is None or fs is None) and mongo_uri:
+            try:
+                client, db = connect_mongo(mongo_uri)
+                mongo_insert_features(db, 'aqi_historical_features', new_data)
+                print(f"Inserted {len(new_data)} rows into MongoDB collection 'aqi_historical_features'")
+            except Exception as me:
+                print(f"Failed to insert into MongoDB: {me}")
 
         try:
             # Fetch 4 days to account for timezone offset (Asia/Karachi is UTC+5)
@@ -165,16 +180,29 @@ def run_feature_pipeline():
             forecast_features = process_forecast_features(weather_forecast_df)
             forecast_features['time'] = pd.to_datetime(forecast_features['time'], utc=True)
 
-            forecast_fg = create_feature_group(
-                fs,
-                name="weather_forecast_features",
-                version=1,
-                primary_key=["time"],
-                event_time="time",
-            )
+            forecast_fg = None
+            try:
+                if fs:
+                    forecast_fg = create_feature_group(
+                        fs,
+                        name="weather_forecast_features",
+                        version=1,
+                        primary_key=["time"],
+                        event_time="time",
+                    )
 
-            insert_features(forecast_fg, forecast_features)
-            print(f"Inserted {len(forecast_features)} forecast weather rows")
+                    insert_features(forecast_fg, forecast_features)
+                    print(f"Inserted {len(forecast_features)} forecast weather rows to Hopsworks")
+            except Exception:
+                forecast_fg = None
+
+            if (forecast_fg is None) and mongo_uri:
+                try:
+                    client, db = connect_mongo(mongo_uri)
+                    mongo_insert_features(db, 'weather_forecast_features', forecast_features)
+                    print(f"Inserted {len(forecast_features)} forecast rows into MongoDB collection 'weather_forecast_features'")
+                except Exception as me:
+                    print(f"Failed to insert forecast into MongoDB: {me}")
         except Exception as forecast_error:
             print(f"Forecast feature update skipped: {forecast_error}")
         

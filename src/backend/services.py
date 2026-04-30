@@ -22,6 +22,10 @@ from backend.api_client import (
 from backend.hopsworks_client import (
     connect_hopsworks, load_model_from_registry, get_forecast_features
 )
+from backend.mongo_client import (
+    connect_mongo, load_model_from_registry_mongo, get_forecast_features as get_forecast_features_mongo,
+    get_latest_features as get_latest_features_mongo, get_batch_data as get_batch_data_mongo
+)
 from features.feature_engineering import process_features, process_forecast_features, prepare_for_prediction
 from backend.schemas import (
     PredictionResponse, PredictionItem, AlertResponse, 
@@ -116,6 +120,65 @@ def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> O
                 'metrics': metrics
             }
         except Exception as hops_error:
+            # Hopsworks failed — try MongoDB Atlas fallback if configured
+            mongo_uri = os.getenv('MONGO_URI')
+            if mongo_uri:
+                try:
+                    client, db = connect_mongo(mongo_uri)
+                    model_info = load_model_from_registry_mongo(db, model_name)
+
+                    if isinstance(model_info, dict):
+                        model_dir = model_info.get('path')
+                        registry_metrics = model_info.get('registry_metrics') or {}
+                    else:
+                        model_dir = model_info
+                        registry_metrics = {}
+
+                    if model_dir is None:
+                        return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
+
+                    model_path = os.path.join(model_dir, f"{model_name}.pkl")
+                    features_path = os.path.join(model_dir, "feature_names.json")
+                    metrics_path = os.path.join(model_dir, "metrics.json")
+
+                    if not os.path.exists(model_path):
+                        model_files = [f for f in os.listdir(model_dir) if f.endswith('.pkl') and 'model' in f.lower()]
+                        if model_files:
+                            model_path = os.path.join(model_dir, model_files[0])
+                        else:
+                            raise FileNotFoundError(f"No model pickle file found in {model_dir}")
+
+                    with open(model_path, 'rb') as f:
+                        model = pickle.load(f)
+
+                    if os.path.exists(features_path):
+                        with open(features_path, 'r') as f:
+                            feature_names = json.load(f)
+                    else:
+                        feature_names = []
+
+                    feature_names = _resolve_feature_names(model, feature_names)
+
+                    if os.path.exists(metrics_path):
+                        with open(metrics_path, 'r') as f:
+                            metrics = json.load(f)
+                    else:
+                        metrics = {}
+
+                    if registry_metrics:
+                        merged_metrics = {}
+                        merged_metrics.update(metrics if isinstance(metrics, dict) else {})
+                        merged_metrics.update(registry_metrics if isinstance(registry_metrics, dict) else {})
+                        metrics = merged_metrics
+
+                    return {
+                        'model': model,
+                        'feature_names': feature_names,
+                        'metrics': metrics
+                    }
+                except Exception:
+                    return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
+
             return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
             
     except Exception as e:
@@ -231,6 +294,9 @@ def generate_forecast(model_artifacts: Dict[str, Any],
         # --- 1. Weather forecast -----------------------------------------------
         forecast_df = pd.DataFrame()
         hopsworks_api_key = os.getenv('HOPSWORKS_API_KEY')
+        mongo_uri = os.getenv('MONGO_URI')
+
+        # Try Hopsworks first (if configured)
         if hopsworks_api_key:
             try:
                 project, fs = connect_hopsworks(hopsworks_api_key)
@@ -242,7 +308,20 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             except Exception:
                 forecast_df = pd.DataFrame()
 
-        if forecast_df.empty:
+        # If Hopsworks yielded nothing, try MongoDB fallback (Atlas) if configured
+        if (forecast_df is None or forecast_df.empty) and mongo_uri:
+            try:
+                client, db = connect_mongo(mongo_uri)
+                forecast_df = get_forecast_features_mongo(
+                    db,
+                    start_time=next_local_hour_utc.strftime('%Y-%m-%d %H:%M:%S'),
+                    end_time=end_time_utc.strftime('%Y-%m-%d %H:%M:%S'),
+                )
+            except Exception:
+                forecast_df = pd.DataFrame()
+
+        # Final fallback: external weather API
+        if forecast_df is None or forecast_df.empty:
             forecast_days = int(np.ceil(hours / 24)) + 1
             weather_forecast_df = fetch_weather_forecast(
                 days=forecast_days,
