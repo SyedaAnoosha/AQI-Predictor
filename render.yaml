@@ -5,14 +5,27 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: cd src/backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # --- Primary store: MongoDB Atlas ---
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGO_DB
+        value: "aqi_predictor"
+      # --- Secondary store: Hopsworks ---
       - key: HOPSWORKS_API_KEY
         sync: false
       - key: HOPSWORKS_PROJECT
         sync: false
+      # auto = MongoDB first, then Hopsworks, then bundled models
+      - key: STORAGE_BACKEND
+        value: "auto"
+      - key: ALLOW_DISK_FALLBACK
+        value: "true"
       - key: LATITUDE
         value: "25.3792"
       - key: LONGITUDE
         value: "68.3683"
       - key: TIMEZONE
         value: "Asia/Karachi"
+      - key: LOCATION_NAME
+        value: "Hyderabad, Sindh"
     healthCheckPath: /health

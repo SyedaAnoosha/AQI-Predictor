@@ -1,4 +1,4 @@
-import hopsworks
+import hopsworks  # type: ignore[import-not-found]
 import pandas as pd
 from datetime import datetime
 from typing import Optional, Tuple
@@ -131,7 +131,7 @@ def get_feature_view(
 def get_training_data(
     fv,
     training_dataset_version: int = 1
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     try:
         X_train, X_val, X_test, y_train, y_val, y_test = fv.get_training_data(
             training_dataset_version=training_dataset_version
@@ -215,8 +215,8 @@ def get_forecast_features(
 def load_model_from_registry(
     mr,
     model_name: str = "lightgbm",
-    metric: str = None,
-    sort_by: str = None
+    metric: Optional[str] = None,
+    sort_by: Optional[str] = None
 ):
     try:
         model = None

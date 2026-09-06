@@ -21,10 +21,9 @@ warnings.filterwarnings('ignore')
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
-from src.backend.hopsworks_client import connect_hopsworks, get_feature_view
-from src.backend.mongo_client import connect_mongo, register_models_to_mongo
-from src.backend.services import generate_forecast
-from src.features.feature_engineering import prepare_for_training
+from backend.storage import get_feature_store, get_model_registry
+from backend.services import generate_forecast
+from features.feature_engineering import prepare_for_training
 
 
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'cache'))
@@ -47,46 +46,36 @@ def _save_json(payload: dict, path: str) -> None:
         json.dump(payload, f, indent=2, default=str)
 
 
-def load_data_from_hopsworks(api_key, project_name):
-    project = None
-    df = None
-    try:
-        project, fs = connect_hopsworks(api_key, project_name)
-        fg = fs.get_feature_group(name="aqi_historical_features", version=1)
-        fv = get_feature_view(fs, name="aqi_feature_view", version=1)
-        df = fg.read().sort_values('time').reset_index(drop=True)
-    except Exception:
-        # Hopsworks failed — try MongoDB fallback
-        mongo_uri = os.getenv('MONGO_URI')
-        if not mongo_uri:
-            raise
-        client, db = connect_mongo(mongo_uri)
-        rows = list(db['aqi_historical_features'].find().sort('time', 1))
-        df = pd.DataFrame(rows)
-        if '_id' in df.columns:
-            df = df.drop(columns=['_id'])
-        if 'time' in df.columns:
-            df['time'] = pd.to_datetime(df['time'], utc=True)
-        df = df.sort_values('time').reset_index(drop=True)
-    
-    # Apply feature engineering with causal imputation (safe for incremental pipelines)
-    # NOTE: This uses backward-only rolling median to prevent look-ahead bias
-    from src.features.feature_engineering import process_features as engineer_features
+def load_training_data():
+    """Load the full observed history from the primary store (MongoDB first).
+
+    Returns (X, y, raw_df) ready for training.
+    """
+    df = get_feature_store().read_all_historical()
+    if df is None or df.empty:
+        raise RuntimeError(
+            "No historical features available from any configured backend. "
+            "Run the feature pipeline or backfill first."
+        )
+
+    print(f"Loaded {len(df)} historical rows for training")
+
+    # Causal imputation: backward-only rolling median, so no look-ahead bias.
+    from features.feature_engineering import process_features as engineer_features
     df_engineered = engineer_features(
         df,
         include_lags=True,
         include_aqi_change_rate=True,
         include_aqi_rate=False,
-        use_causal_imputation=True
+        use_causal_imputation=True,
     )
-    
+
     X, y = prepare_for_training(df_engineered, target_col='aqi')
-    
+
     if 'season' in X.columns:
         X = pd.get_dummies(X, columns=['season'], prefix='season', drop_first=False)
-    
-    # project may be undefined when using Mongo fallback
-    return X, y, df, (project if 'project' in locals() else None)
+
+    return X, y, df
 
 
 def _sanitize_feature_matrix(X: pd.DataFrame) -> pd.DataFrame:
@@ -141,8 +130,9 @@ def train_random_forest(X_train, y_train, X_val, y_val):
         random_state=42, n_jobs=-1, verbose=0
     )
     model.fit(X_train, y_train)
-    y_pred = model.predict(X_val)
-    
+    # LightGBM's predict() is typed as a broad union; narrow it for the metrics.
+    y_pred = np.asarray(model.predict(X_val))
+
     rmse = np.sqrt(mean_squared_error(y_val, y_pred))
     mae = mean_absolute_error(y_val, y_pred)
     r2 = r2_score(y_val, y_pred)
@@ -300,9 +290,15 @@ def save_model_artifacts(model, scaler, feature_names, metrics, model_name, mode
     models_path = os.path.join(os.path.dirname(__file__), models_dir)
     os.makedirs(models_path, exist_ok=True)
     
-    model_filename = f'{model_name.lower().replace(" ", "_")}.pkl'
-    with open(os.path.join(models_path, model_filename), 'wb') as f:
-        pickle.dump(model, f)
+    normalized = model_name.lower().replace(" ", "_")
+    model_filename = f'{normalized}.pkl'
+    # Keras models are not picklable; save them in the native format and
+    # keep the .pkl name reserved for the sklearn-style models.
+    if model_name == 'TensorFlow NN' or hasattr(model, 'save_weights'):
+        model.save(os.path.join(models_path, f'{normalized}.keras'))
+    else:
+        with open(os.path.join(models_path, model_filename), 'wb') as f:
+            pickle.dump(model, f)
     
     if scaler is not None:
         with open(os.path.join(models_path, 'scaler.pkl'), 'wb') as f:
@@ -336,79 +332,36 @@ def cache_daily_outputs(best_model_name: str, all_models_metrics: dict, predicti
         payload = prediction_response.model_dump() if hasattr(prediction_response, 'model_dump') else prediction_response.dict()
         _save_json(payload, PREDICTION_CACHE_PATH)
 
-def register_models_to_hopsworks(project, best_model_name, all_models_metrics, feature_names):
-    try:
-        mr = project.get_model_registry()
-        for model_name, metrics in all_models_metrics.items():
-            try:
-                if model_name in ['Random Forest', 'XGBoost', 'LightGBM']:
-                    model_module = mr.sklearn
-                elif model_name == 'TensorFlow NN':
-                    model_module = mr.tensorflow
-                else:
-                    model_module = mr.sklearn
-                
-                # Convert all metrics to floats
-                float_metrics = {}
-                for k, v in metrics.items():
-                    try:
-                        float_metrics[k] = float(v)
-                    except (ValueError, TypeError):
-                        pass
-                
-                model_meta = model_module.create_model(
-                    name=model_name.lower().replace(' ', '_'),
-                    metrics=float_metrics,
-                )
-                model_dir = os.path.join(os.path.dirname(__file__), '../../models')
-                model_meta.save(model_dir)
-            except Exception as e:
-                print(f"ERROR registering {model_name}: {e}")
-                import traceback
-                traceback.print_exc()
-        return mr
-    except Exception as e:
-        print(f"ERROR in register_models_to_hopsworks: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+def publish_models(best_model_name, all_models_metrics, feature_names):
+    """Publish trained models to every configured backend (MongoDB first).
 
-
-def register_models_to_mongo_if_available(mongo_uri, best_model_name, all_models_metrics, feature_names):
-    if not mongo_uri:
-        return None
-
-    try:
-        client, db = connect_mongo(mongo_uri)
-        register_models_to_mongo(
-            db,
-            best_model_name=best_model_name,
-            all_models_metrics=all_models_metrics,
-            feature_names=feature_names,
-        )
-        print("Models registered to MongoDB Atlas model_registry collection")
-        return db
-    except Exception as e:
-        print(f"ERROR registering models to MongoDB: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    Must run *after* artifacts are written to `models/`, since the MongoDB
+    registry bundles those files into GridFS.
+    """
+    results = get_model_registry().publish(
+        best_model_name=best_model_name,
+        all_models_metrics=all_models_metrics,
+        feature_names=feature_names,
+    )
+    if not results:
+        print("WARNING: no storage backend accepted the trained models")
+    else:
+        for backend, outcome in results.items():
+            print(f"  model registry [{backend}]: {outcome}")
+    return results
 
 
 def run_training_and_inference():
-    from dotenv import load_dotenv
-    load_dotenv()
+    from config import load_env
+    load_env()
 
-    HOPSWORKS_API_KEY = os.getenv('HOPSWORKS_API_KEY')
-    HOPSWORKS_PROJECT = os.getenv('HOPSWORKS_PROJECT')
-    MONGO_URI = os.getenv('MONGO_URI')
-
-    if not HOPSWORKS_API_KEY and not MONGO_URI:
-        print("ERROR: Set either HOPSWORKS_API_KEY/HOPSWORKS_PROJECT or MONGO_URI")
+    from backend.storage import mongo_uri
+    if not mongo_uri() and not os.getenv('HOPSWORKS_API_KEY'):
+        print("ERROR: Set MONGODB_URI (preferred) or HOPSWORKS_API_KEY/HOPSWORKS_PROJECT")
         return
 
     try:
-        X, y, df, project = load_data_from_hopsworks(HOPSWORKS_API_KEY, HOPSWORKS_PROJECT)
+        X, y, df = load_training_data()
     except Exception as e:
         print(f"ERROR loading training data: {e}")
         import traceback
@@ -539,22 +492,31 @@ def run_training_and_inference():
     print("\nTraining results (RMSE/MAE/R2):")
     print(metrics_table.round(4).to_string())
 
-    print(f"Saving model artifacts for best model: {best_model_name}")
+    # Persist every trained model, not just the winner: the registry bundles
+    # whatever is on disk, and the API can be asked to serve any model by name.
+    print(f"Saving model artifacts (best model: {best_model_name})")
+    for model_name, model in models.items():
+        try:
+            scaler_for_model = scaler if model_name in ['ElasticNet', 'TensorFlow NN'] else None
+            save_model_artifacts(model, scaler_for_model, list(X_train.columns),
+                                 all_models_metrics[model_name], model_name)
+            print(f"  saved {model_name}")
+        except Exception as e:
+            print(f"  ERROR saving {model_name}: {e}")
+
+    # Re-save the best model last so the shared feature_names.json/metrics.json
+    # sidecars describe the model the API serves by default.
     try:
         save_model_artifacts(best_model, save_scaler, list(X_train.columns),
                             all_models_metrics[best_model_name], best_model_name)
         print("Model artifacts saved successfully")
     except Exception as e:
-        print(f"ERROR saving model artifacts: {e}")
+        print(f"ERROR saving best model artifacts: {e}")
         import traceback
         traceback.print_exc()
 
-    if project is not None:
-        print("Registering models to Hopsworks...")
-        register_models_to_hopsworks(project, best_model_name, all_models_metrics, list(X_train.columns))
-    else:
-        print("Registering models to MongoDB Atlas...")
-        register_models_to_mongo_if_available(MONGO_URI, best_model_name, all_models_metrics, list(X_train.columns))
+    print("Publishing models to the registry...")
+    publish_models(best_model_name, all_models_metrics, list(X_train.columns))
 
     best_artifacts = {
         'model': best_model,

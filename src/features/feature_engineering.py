@@ -1,7 +1,7 @@
 # Feature engineering module for AQI Predictor project
 import pandas as pd
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 
 def _causal_rolling_median(series: pd.Series, window: int = 12) -> pd.Series:
     """
@@ -128,7 +128,7 @@ def create_cyclical_features(df: pd.DataFrame) -> pd.DataFrame:
     
     return df_cyc
 
-def create_lag_features(df: pd.DataFrame, lags: list = None) -> pd.DataFrame:
+def create_lag_features(df: pd.DataFrame, lags: Optional[list] = None) -> pd.DataFrame:
     """Create lag features for time series prediction.
     
     Based on EDA lag analysis (ACF/PACF, cross-correlation, Mutual Information):

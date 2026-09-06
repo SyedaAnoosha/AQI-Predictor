@@ -8,10 +8,13 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
-import shap
+import logging
 
-env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
-load_dotenv(dotenv_path=env_path)
+logger = logging.getLogger(__name__)
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from config import load_env
+load_env()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -19,13 +22,7 @@ from backend.api_client import (
     fetch_weather_forecast,
     fetch_historical_weather, fetch_historical_aqi
 )
-from backend.hopsworks_client import (
-    connect_hopsworks, load_model_from_registry, get_forecast_features
-)
-from backend.mongo_client import (
-    connect_mongo, load_model_from_registry_mongo, get_forecast_features as get_forecast_features_mongo,
-    get_latest_features as get_latest_features_mongo, get_batch_data as get_batch_data_mongo
-)
+from backend.storage import get_feature_store, get_model_registry
 from features.feature_engineering import process_features, process_forecast_features, prepare_for_prediction
 from backend.schemas import (
     PredictionResponse, PredictionItem, AlertResponse, 
@@ -52,183 +49,114 @@ def _resolve_feature_names(model: Any, feature_names_from_file: List[str]) -> Li
 
     return feature_names_from_file or model_feature_names
 
-def load_model_artifacts(api_key: str = None, model_name: str = "lightgbm") -> Optional[Dict[str, Any]]:
-    try:
-        model_name = (model_name or "").strip().lower().replace(" ", "_")
-        if api_key is None:
-            api_key = os.getenv('HOPSWORKS_API_KEY')
-            if not api_key:
-                return load_model_from_disk(model_name=model_name)
-        allow_disk_fallback = os.getenv("ALLOW_DISK_FALLBACK", "false").strip().lower() == "true"
-        
-        try:
-            project, fs = connect_hopsworks(api_key)
-            mr = project.get_model_registry()
+def _read_artifact_dir(model_dir: str, model_name: str,
+                       registry_metrics: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Load a model pickle plus its sidecars from an artifact directory.
 
-            metric = os.getenv("MODEL_SELECTION_METRIC", "val_rmse")
-            sort_by = os.getenv("MODEL_SELECTION_SORT", "min")
-            
-            model_info = load_model_from_registry(mr, model_name, metric=metric, sort_by=sort_by)
+    Shared by every backend so the unpacking logic exists once rather than
+    being duplicated per store.
+    """
+    keras_path = os.path.join(model_dir, f"{model_name}.keras")
+    model_path = os.path.join(model_dir, f"{model_name}.pkl")
 
-            if isinstance(model_info, dict):
-                model_dir = model_info.get("path")
-                registry_metrics = model_info.get("registry_metrics") or {}
-            else:
-                model_dir = model_info
-                registry_metrics = {}
-            
-            if model_dir is None:
-                return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
-            
-            model_path = os.path.join(model_dir, f"{model_name}.pkl")
-            features_path = os.path.join(model_dir, "feature_names.json")
-            metrics_path = os.path.join(model_dir, "metrics.json")
-            
-            if not os.path.exists(model_path):
-                model_files = [f for f in os.listdir(model_dir) if f.endswith('.pkl') and 'model' in f.lower()]
-                if model_files:
-                    model_path = os.path.join(model_dir, model_files[0])
-                else:
-                    raise FileNotFoundError(f"No model pickle file found in {model_dir}")
-            
-            with open(model_path, 'rb') as f:
-                model = pickle.load(f)
-            
-            if os.path.exists(features_path):
-                with open(features_path, 'r') as f:
-                    feature_names = json.load(f)
-            else:
-                feature_names = []
-
-            feature_names = _resolve_feature_names(model, feature_names)
-            
-            if os.path.exists(metrics_path):
-                with open(metrics_path, 'r') as f:
-                    metrics = json.load(f)
-            else:
-                metrics = {}
-
-            if registry_metrics:
-                merged_metrics = {}
-                merged_metrics.update(metrics if isinstance(metrics, dict) else {})
-                merged_metrics.update(registry_metrics if isinstance(registry_metrics, dict) else {})
-                metrics = merged_metrics
-            
-            return {
-                'model': model,
-                'feature_names': feature_names,
-                'metrics': metrics
-            }
-        except Exception as hops_error:
-            # Hopsworks failed — try MongoDB Atlas fallback if configured
-            mongo_uri = os.getenv('MONGO_URI')
-            if mongo_uri:
-                try:
-                    client, db = connect_mongo(mongo_uri)
-                    model_info = load_model_from_registry_mongo(db, model_name)
-
-                    if isinstance(model_info, dict):
-                        model_dir = model_info.get('path')
-                        registry_metrics = model_info.get('registry_metrics') or {}
-                    else:
-                        model_dir = model_info
-                        registry_metrics = {}
-
-                    if model_dir is None:
-                        return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
-
-                    model_path = os.path.join(model_dir, f"{model_name}.pkl")
-                    features_path = os.path.join(model_dir, "feature_names.json")
-                    metrics_path = os.path.join(model_dir, "metrics.json")
-
-                    if not os.path.exists(model_path):
-                        model_files = [f for f in os.listdir(model_dir) if f.endswith('.pkl') and 'model' in f.lower()]
-                        if model_files:
-                            model_path = os.path.join(model_dir, model_files[0])
-                        else:
-                            raise FileNotFoundError(f"No model pickle file found in {model_dir}")
-
-                    with open(model_path, 'rb') as f:
-                        model = pickle.load(f)
-
-                    if os.path.exists(features_path):
-                        with open(features_path, 'r') as f:
-                            feature_names = json.load(f)
-                    else:
-                        feature_names = []
-
-                    feature_names = _resolve_feature_names(model, feature_names)
-
-                    if os.path.exists(metrics_path):
-                        with open(metrics_path, 'r') as f:
-                            metrics = json.load(f)
-                    else:
-                        metrics = {}
-
-                    if registry_metrics:
-                        merged_metrics = {}
-                        merged_metrics.update(metrics if isinstance(metrics, dict) else {})
-                        merged_metrics.update(registry_metrics if isinstance(registry_metrics, dict) else {})
-                        metrics = merged_metrics
-
-                    return {
-                        'model': model,
-                        'feature_names': feature_names,
-                        'metrics': metrics
-                    }
-                except Exception:
-                    return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
-
-            return load_model_from_disk(model_name=model_name) if allow_disk_fallback else None
-            
-    except Exception as e:
-        return None
-
-def load_model_from_disk(model_dir: str = None, model_name: str = "lightgbm") -> Optional[Dict[str, Any]]:
-    try:
-        if model_dir is None:
-            model_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models'))
-        
-        candidate_model = f"{model_name}.pkl"
-        model_path = os.path.join(model_dir, candidate_model)
+    if os.path.exists(keras_path):
+        # Neural-net models are stored in Keras' native format, not pickled.
+        from keras.models import load_model as _load_keras
+        model = _load_keras(keras_path)
+    else:
         if not os.path.exists(model_path):
-            model_path = os.path.join(model_dir, "lightgbm.pkl")
+            candidates = [f for f in os.listdir(model_dir) if f.endswith('.pkl')]
+            if not candidates:
+                raise FileNotFoundError(f"No model artifact found in {model_dir}")
+            model_path = os.path.join(model_dir, candidates[0])
 
-        candidate_features = f"feature_names_{model_name}.json"
-        features_path = os.path.join(model_dir, candidate_features if os.path.exists(os.path.join(model_dir, candidate_features)) else "feature_names.json")
-
-        candidate_metrics = f"metrics_{model_name}.json"
-        metrics_path = os.path.join(model_dir, candidate_metrics if os.path.exists(os.path.join(model_dir, candidate_metrics)) else "metrics.json")
-                
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
-        
-        if os.path.exists(features_path):
-            with open(features_path, 'r') as f:
-                feature_names = json.load(f)
-        else:
-            if hasattr(model, 'feature_names_'):
-                feature_names = list(model.feature_names_)
-            elif hasattr(model, 'feature_name_'):
-                feature_names = list(model.feature_name_)
-            else:
-                return None
 
-        feature_names = _resolve_feature_names(model, feature_names)
-        
-        if os.path.exists(metrics_path):
-            with open(metrics_path, 'r') as f:
+    feature_names: List[str] = []
+    for candidate in (f"feature_names_{model_name}.json", "feature_names.json"):
+        path = os.path.join(model_dir, candidate)
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                feature_names = json.load(f)
+            break
+
+    metrics: Dict[str, Any] = {}
+    for candidate in (f"metrics_{model_name}.json", "metrics.json"):
+        path = os.path.join(model_dir, candidate)
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
                 metrics = json.load(f)
-        else:
-            metrics = {}
-        
-        return {
-            'model': model,
-            'feature_names': feature_names,
-            'metrics': metrics
-        }
-    except Exception as e:
+            break
+
+    feature_names = _resolve_feature_names(model, feature_names)
+    if not feature_names:
+        raise ValueError(f"Could not determine feature names for '{model_name}'")
+
+    if registry_metrics:
+        merged = dict(metrics if isinstance(metrics, dict) else {})
+        merged.update(registry_metrics)
+        metrics = merged
+
+    return {'model': model, 'feature_names': feature_names, 'metrics': metrics}
+
+
+def _predict_flat(model, X) -> np.ndarray:
+    """Predict and flatten to 1-D.
+
+    Keras models return shape (n, 1) while sklearn-style models return (n,);
+    flattening here keeps every caller uniform.
+    """
+    preds = model.predict(X, verbose=0) if _is_keras(model) else model.predict(X)
+    return np.asarray(preds).reshape(-1)
+
+
+def _is_keras(model) -> bool:
+    return hasattr(model, "save_weights") or type(model).__module__.startswith("keras")
+
+
+def load_model_from_disk(model_dir: Optional[str] = None, model_name: str = "lightgbm") -> Optional[Dict[str, Any]]:
+    """Read a model straight off the local `models/` directory.
+
+    Last-resort fallback when no storage backend can supply the model.
+    """
+    if model_dir is None:
+        model_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models'))
+    try:
+        artifacts = _read_artifact_dir(model_dir, model_name)
+        artifacts['source'] = 'disk'
+        return artifacts
+    except Exception as exc:
+        logger.error("Disk load of '%s' from %s failed: %s", model_name, model_dir, exc)
         return None
+
+
+def load_model_artifacts(api_key: Optional[str] = None, model_name: str = "lightgbm") -> Optional[Dict[str, Any]]:
+    """Load a model, preferring MongoDB and falling back to Hopsworks then disk.
+
+    Backend selection and ordering live in `backend.storage`; this function
+    only turns the resulting artifact directory into usable objects.
+    """
+    model_name = (model_name or "").strip().lower().replace(" ", "_")
+
+    try:
+        info = get_model_registry().load(model_name)
+        if info is None:
+            logger.error("No backend could supply model '%s'", model_name)
+            return None
+
+        artifacts = _read_artifact_dir(
+            info['path'], model_name, info.get('registry_metrics') or {}
+        )
+        artifacts['source'] = info.get('source', 'unknown')
+        artifacts['version'] = info.get('version')
+        logger.info("Loaded model '%s' from %s with %d features",
+                    model_name, artifacts['source'], len(artifacts['feature_names']))
+        return artifacts
+    except Exception as exc:
+        logger.error("Failed to load model '%s': %s", model_name, exc, exc_info=True)
+        return load_model_from_disk(model_name=model_name)
+
 
 def make_predictions(model_artifacts: Dict[str, Any], features_df: pd.DataFrame) -> np.ndarray:
     if model_artifacts is None:
@@ -248,7 +176,7 @@ def make_predictions(model_artifacts: Dict[str, Any], features_df: pd.DataFrame)
     
     X = X.ffill().bfill().fillna(0)
     
-    predictions = model.predict(X)
+    predictions = _predict_flat(model, X)
     
     predictions = np.clip(predictions, 0, 500)
     
@@ -281,7 +209,7 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                      timezone: str = "Asia/Karachi") -> PredictionResponse:
 
     try:
-        next_local_hour = pd.Timestamp.now(tz=timezone).ceil('H')
+        next_local_hour = pd.Timestamp.now(tz=timezone).ceil('h')  # 'H' was removed in pandas 3.0
         next_local_hour_utc = next_local_hour.tz_convert('UTC')
         end_time_utc = next_local_hour_utc + pd.Timedelta(hours=hours)
 
@@ -292,35 +220,13 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             return ts.dt.tz_convert('UTC')
 
         # --- 1. Weather forecast -----------------------------------------------
-        forecast_df = pd.DataFrame()
-        hopsworks_api_key = os.getenv('HOPSWORKS_API_KEY')
-        mongo_uri = os.getenv('MONGO_URI')
+        # The storage layer tries MongoDB first, then Hopsworks.
+        forecast_df = get_feature_store().read_forecast(
+            start_time=next_local_hour_utc.strftime('%Y-%m-%d %H:%M:%S'),
+            end_time=end_time_utc.strftime('%Y-%m-%d %H:%M:%S'),
+        )
 
-        # Try Hopsworks first (if configured)
-        if hopsworks_api_key:
-            try:
-                project, fs = connect_hopsworks(hopsworks_api_key)
-                forecast_df = get_forecast_features(
-                    fs,
-                    start_time=next_local_hour_utc.strftime('%Y-%m-%d %H:%M:%S'),
-                    end_time=end_time_utc.strftime('%Y-%m-%d %H:%M:%S'),
-                )
-            except Exception:
-                forecast_df = pd.DataFrame()
-
-        # If Hopsworks yielded nothing, try MongoDB fallback (Atlas) if configured
-        if (forecast_df is None or forecast_df.empty) and mongo_uri:
-            try:
-                client, db = connect_mongo(mongo_uri)
-                forecast_df = get_forecast_features_mongo(
-                    db,
-                    start_time=next_local_hour_utc.strftime('%Y-%m-%d %H:%M:%S'),
-                    end_time=end_time_utc.strftime('%Y-%m-%d %H:%M:%S'),
-                )
-            except Exception:
-                forecast_df = pd.DataFrame()
-
-        # Final fallback: external weather API
+        # Final fallback: live external weather API
         if forecast_df is None or forecast_df.empty:
             forecast_days = int(np.ceil(hours / 24)) + 1
             weather_forecast_df = fetch_weather_forecast(
@@ -416,9 +322,10 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             row['aqi_change_3h']  = aqi_prev - _lag(aqi_buffer, 4)
             row['aqi_change_6h']  = aqi_prev - _lag(aqi_buffer, 7)
             row['aqi_change_24h'] = aqi_prev - _lag(aqi_buffer, 25)
-            row['aqi_rate_1h']  = np.clip(row['aqi_change_1h'].values[0]  / 1.0, -10, 10)
-            row['aqi_rate_3h']  = np.clip(row['aqi_change_3h'].values[0]  / 3.0, -10, 10)
-            row['aqi_rate_24h'] = np.clip(row['aqi_change_24h'].values[0] / 24.0, -10, 10)
+            _chg = lambda col: float(row[col].values[0])  # type: ignore[arg-type]
+            row['aqi_rate_1h']  = float(np.clip(_chg('aqi_change_1h') / 1.0, -10, 10))
+            row['aqi_rate_3h']  = float(np.clip(_chg('aqi_change_3h') / 3.0, -10, 10))
+            row['aqi_rate_24h'] = float(np.clip(_chg('aqi_change_24h') / 24.0, -10, 10))
 
             # ---- Align to model features & predict ----
             X = prepare_for_prediction(row)
@@ -427,7 +334,7 @@ def generate_forecast(model_artifacts: Dict[str, Any],
                     X[feat] = 0
             X = X[feature_names].ffill().bfill().fillna(0)
 
-            pred_aqi = float(np.clip(model.predict(X)[0], 0, 500))
+            pred_aqi = float(np.clip(_predict_flat(model, X)[0], 0, 500))
             predictions_list.append(pred_aqi)
 
             prediction_items.append(PredictionItem(
@@ -442,11 +349,11 @@ def generate_forecast(model_artifacts: Dict[str, Any],
             co_buffer.append(_aqi_to_co(pred_aqi, last_co))
             # Weather values come from the forecast row
             temp_buffer.append(
-                float(row['temperature_2m'].values[0])
+                float(row['temperature_2m'].values[0])  # type: ignore[arg-type]
                 if 'temperature_2m' in row.columns else temp_buffer[-1]
             )
             pres_buffer.append(
-                float(row['pressure_msl'].values[0])
+                float(row['pressure_msl'].values[0])  # type: ignore[arg-type]
                 if 'pressure_msl' in row.columns else pres_buffer[-1]
             )
 
@@ -532,7 +439,7 @@ def _get_alert_level(aqi_value: float) -> str:
     else:
         return "Good"
 
-def check_alerts(predictions: List[PredictionItem], current_aqi: float = None) -> AlertResponse:
+def check_alerts(predictions: List[PredictionItem], current_aqi: Optional[float] = None) -> AlertResponse:
     max_aqi = max([p.predicted_aqi for p in predictions])
     max_prediction = [p for p in predictions if p.predicted_aqi == max_aqi][0]
     
@@ -582,14 +489,28 @@ def get_feature_importance(model_artifacts: Dict[str, Any]) -> Dict[str, float]:
     return importance_dict
 
 def get_shap_values(model_artifacts: Dict[str, Any], 
-                    sample_data: pd.DataFrame = None,
+                    sample_data: Optional[pd.DataFrame] = None,
                     num_samples: int = 100) -> Dict[str, Any]:
     if model_artifacts is None:
         raise ValueError("Model artifacts not loaded")
     
     model = model_artifacts['model']
     feature_names = model_artifacts['feature_names']
-    
+
+    try:
+        import shap
+    except ImportError:
+        logger.info("shap not installed; falling back to model feature importance")
+        importance = get_feature_importance(model_artifacts)
+        return {
+            "shap_importance": importance,
+            "method": "Feature Importance (shap not installed)",
+            "top_features": [
+                {"feature_name": name, "importance_score": float(score)}
+                for name, score in list(importance.items())[:20]
+            ],
+        }
+
     try:
         if hasattr(model, 'predict') and hasattr(model, 'feature_importances_'):
             explainer = shap.TreeExplainer(model)

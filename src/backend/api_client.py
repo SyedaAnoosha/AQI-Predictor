@@ -3,6 +3,7 @@ import openmeteo_requests
 import requests_cache
 from retry_requests import retry
 import pandas as pd
+from typing import Any
 
 _api_client = None
 _CACHE_PATH = ".cache"
@@ -31,12 +32,25 @@ def _weather_api_with_cache_retry(client, url: str, params: dict):
             return client.weather_api(url, params=params)[0]
         raise
 
+
+def _require_hourly(response, url: str) -> Any:
+    """Return the response's hourly block, failing loudly if absent.
+
+    The Open-Meteo SDK types `Hourly()` as optional; without this guard a
+    malformed response surfaces as an opaque AttributeError deep in parsing.
+    """
+    hourly = response.Hourly()
+    if hourly is None:
+        raise ValueError(f"Open-Meteo response from {url} contained no hourly data")
+    return hourly
+
+
 def get_api_client():
     global _api_client
     if _api_client is None:
         cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
         retry_session = retry(cache_session, retries=3, backoff_factor=0.2)
-        _api_client = openmeteo_requests.Client(session=retry_session)
+        _api_client = openmeteo_requests.Client(session=retry_session)  # type: ignore[arg-type]
     return _api_client
 
 
@@ -67,7 +81,7 @@ def fetch_historical_weather(
         }
         
         response = _weather_api_with_cache_retry(client, url, params)
-        hourly = response.Hourly()
+        hourly = _require_hourly(response, url)
         hourly_data = {
             "time": pd.date_range(
                 start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
@@ -117,7 +131,7 @@ def fetch_historical_aqi(
         }
         
         response = _weather_api_with_cache_retry(client, url, params)
-        hourly = response.Hourly()
+        hourly = _require_hourly(response, url)
         hourly_data = {
             "time": pd.date_range(
                 start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
@@ -164,7 +178,7 @@ def fetch_weather_forecast(
         }
         
         response = _weather_api_with_cache_retry(client, url, params)
-        hourly = response.Hourly()
+        hourly = _require_hourly(response, url)
         hourly_data = {
             "time": pd.date_range(
                 start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
@@ -212,7 +226,7 @@ def fetch_weather_forecast(
 #         }
         
 #         response = client.weather_api(url, params=params)[0]
-#         hourly = response.Hourly()
+#         hourly = _require_hourly(response, url)
 #         hourly_data = {
 #             "time": pd.date_range(
 #                 start=pd.to_datetime(hourly.Time(), unit="s", utc=True),

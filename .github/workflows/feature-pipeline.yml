@@ -31,14 +31,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create .env file
-        run: |
-          echo "HOPSWORKS_API_KEY=${{ secrets.HOPSWORKS_API_KEY }}" > .env
-          echo "HOPSWORKS_PROJECT=${{ secrets.HOPSWORKS_PROJECT }}" >> .env
-          echo "LATITUDE=25.3548" >> .env
-          echo "LONGITUDE=68.3711" >> .env
-
       - name: Run feature pipeline
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGO_DB: ${{ secrets.MONGO_DB }}
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          STORAGE_BACKEND: ${{ vars.STORAGE_BACKEND || 'auto' }}
+          LATITUDE: '25.3792'
+          LONGITUDE: '68.3683'
+          TIMEZONE: 'Asia/Karachi'
         run: |
           cd src
           python -m features.feature_pipeline

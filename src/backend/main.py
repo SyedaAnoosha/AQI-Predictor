@@ -16,8 +16,9 @@ import logging
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Load environment variables from project root
-env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
-load_dotenv(dotenv_path=env_path)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from config import load_env
+load_env()
 
 from backend.routes import router as api_router
 
@@ -56,22 +57,23 @@ async def root():
 
 @app.get("/health", tags=["health"])
 async def health_check():
-    """Health check endpoint"""
-    import os.path
+    """Health check reporting model and storage-backend availability."""
     from backend.routes import model_artifacts
-    
-    hopsworks_api_key = os.getenv("HOPSWORKS_API_KEY")
-    
-    # Check if model artifacts were successfully loaded
+    from backend.storage import storage_status
+
+    status = storage_status()
     model_loaded = model_artifacts is not None
-    
+
     return {
-        "status": "healthy",
+        # Degraded (not unhealthy) when the API is up but cannot serve predictions.
+        "status": "healthy" if model_loaded else "degraded",
         "timestamp": datetime.now().isoformat(),
         "model_loaded": model_loaded,
-        "feature_store_available": bool(hopsworks_api_key),
+        "model_source": (model_artifacts or {}).get("source"),
+        "storage": status,
+        "feature_store_available": status["active_backend"] != "none",
         "version": "1.0.0",
-        "location": "Hyderabad, Sindh"
+        "location": os.getenv("LOCATION_NAME", "Hyderabad, Sindh"),
     }
 
 

@@ -3,25 +3,23 @@ import sys
 import json
 import pandas as pd
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from dotenv import load_dotenv
 import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
-load_dotenv(dotenv_path=env_path)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from config import load_env
+load_env()
 
 from backend.services import (
     load_model_artifacts, generate_forecast, check_alerts,
     get_feature_importance, get_historical_data, get_model_metrics,
     get_current_aqi, get_shap_values
 )
-from backend.hopsworks_client import (
-    connect_hopsworks, get_all_model_metrics
-)
-from backend.mongo_client import connect_mongo
+from backend.storage import get_model_registry, storage_status
 from backend.schemas import (
     PredictionResponse, AlertResponse
 )
@@ -31,17 +29,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-LATITUDE = 25.3792
-LONGITUDE = 68.3683
-TIMEZONE = 'Asia/Karachi'
-HOPSWORKS_API_KEY = os.getenv('HOPSWORKS_API_KEY')
+LATITUDE = float(os.getenv('LATITUDE', 25.3792))
+LONGITUDE = float(os.getenv('LONGITUDE', 68.3683))
+TIMEZONE = os.getenv('TIMEZONE', 'Asia/Karachi')
 MODEL_CACHE: Dict[str, Any] = {}
 
 CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'cache'))
 METRICS_CACHE_PATH = os.path.join(CACHE_DIR, 'all_model_metrics.json')
 BEST_MODEL_META_PATH = os.path.join(CACHE_DIR, 'best_model_meta.json')
 
-def _normalize_model_key(name: str) -> str:
+def _normalize_model_key(name: Optional[str]) -> str:
     return (name or '').strip().lower().replace(' ', '_')
 
 def _load_best_model_name() -> str:
@@ -57,13 +54,27 @@ def _load_best_model_name() -> str:
         pass
     return ""
 
-DEFAULT_MODEL = os.getenv('DEFAULT_MODEL', '').strip().lower()
-DEFAULT_MODEL = DEFAULT_MODEL if DEFAULT_MODEL else _load_best_model_name() or 'lightgbm'
+def _discover_default_model() -> str:
+    """Pick the serving model: explicit env var, then the registry's best, then cache."""
+    configured = os.getenv('DEFAULT_MODEL', '').strip().lower()
+    if configured:
+        return _normalize_model_key(configured)
+    try:
+        best = get_model_registry().best_model_name()
+        if best:
+            logger.info("Using best model from registry: %s", best)
+            return _normalize_model_key(best)
+    except Exception as exc:
+        logger.warning("Could not read best model from registry: %s", exc)
+    return _load_best_model_name() or 'lightgbm'
+
+
+DEFAULT_MODEL = _discover_default_model()
 AVAILABLE_MODELS: List[str] = [DEFAULT_MODEL]
 
 def _load_and_cache_model(model_name: str) -> Any:
     normalized = _normalize_model_key(model_name)
-    artifacts = load_model_artifacts(api_key=HOPSWORKS_API_KEY, model_name=normalized)
+    artifacts = load_model_artifacts(model_name=normalized)
     if artifacts:
         MODEL_CACHE[normalized] = artifacts
     return artifacts
@@ -361,55 +372,37 @@ async def get_model_metrics_endpoint(model: str = Query(DEFAULT_MODEL, descripti
     tags=["Model Info"]
 )
 async def get_all_model_metrics_endpoint():
+    """Metrics for every registered model, from MongoDB first then Hopsworks."""
     try:
-        if not HOPSWORKS_API_KEY:
-            logger.warning("Hopsworks API key not set, falling back to cache")
-            cached = _load_cached_metrics()
-            metrics_payload = cached if cached else {}
-        else:
-            try:
-                project, fs = connect_hopsworks(HOPSWORKS_API_KEY)
-                mr = project.get_model_registry()
-                metrics_payload = get_all_model_metrics(mr)
-                
-                if not metrics_payload:
-                    metrics_payload = _load_cached_metrics()
-            except Exception as e:
-                logger.warning(f"Could not fetch from Hopsworks: {e}, falling back to cache/mongo")
-                # Try MongoDB model registry as secondary fallback
-                mongo_uri = os.getenv('MONGO_URI')
-                metrics_payload = {}
-                if mongo_uri:
-                    try:
-                        client, db = connect_mongo(mongo_uri)
-                        docs = list(db['model_registry'].find())
-                        for d in docs:
-                            name = d.get('name') or d.get('model_name')
-                            if not name:
-                                continue
-                            metrics_payload[name] = d.get('metrics', {}) or {}
-                        if not metrics_payload:
-                            metrics_payload = _load_cached_metrics()
-                    except Exception:
-                        metrics_payload = _load_cached_metrics()
-                else:
-                    metrics_payload = _load_cached_metrics()
-        
-        available = list(metrics_payload.keys()) if metrics_payload else AVAILABLE_MODELS
+        metrics_payload = get_model_registry().all_metrics()
+        if not metrics_payload:
+            logger.info("Registry returned no metrics; using local cache")
+            metrics_payload = _load_cached_metrics()
 
+        available = list(metrics_payload.keys()) if metrics_payload else AVAILABLE_MODELS
         return {
             "default_model": DEFAULT_MODEL,
             "available_models": available,
-            "metrics": metrics_payload
+            "metrics": metrics_payload,
         }
-    except Exception as e:
-        logger.error(f"Error fetching all model metrics: {str(e)}")
+    except Exception as exc:
+        logger.error("Error fetching model metrics: %s", exc, exc_info=True)
         cached = _load_cached_metrics()
         return {
             "default_model": DEFAULT_MODEL,
             "available_models": list(cached.keys()) if cached else AVAILABLE_MODELS,
-            "metrics": cached
+            "metrics": cached,
         }
+
+@router.get(
+    "/storage-status",
+    summary="Show which storage backends are reachable",
+    tags=["Model Info"]
+)
+async def storage_status_endpoint():
+    """Report backend priority and connectivity (MongoDB is primary)."""
+    return storage_status()
+
 
 @router.get(
     "/models",

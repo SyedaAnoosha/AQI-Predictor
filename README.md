@@ -34,8 +34,8 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 - **Feature Engineering** - 50+ engineered features (lags, interactions, cyclical)
 
 ### 🚀 Production-Ready
-- **100% Serverless** - GitHub Actions + Hopsworks
-- **Model Registry** - Versioned models in Hopsworks
+- **100% Serverless** - GitHub Actions + MongoDB Atlas
+- **Model Registry** - Versioned models in MongoDB GridFS (portable across machines)
 - **Feature Store** - 2+ years of observed historical data (no forecast data in training)
 - **Caching** - Optimized response times (< 100ms)
 - **Type Safety** - Automatic float32/float64 schema conversions
@@ -54,10 +54,19 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 └────────────┬──────────────────────────────┬─────────────────┘
              │                              │
              ▼                              ▼
-      ┌──────────────┐              ┌──────────────┐
-      │  Hopsworks   │◄─────────────┤Model Registry│
-      │Feature Store │              └──────────────┘
-      └──────┬───────┘
+      ┌────────────────────────────────────────────┐
+      │        Storage Layer (src/backend/         │
+      │              storage.py)                   │
+      │                                            │
+      │   1. MongoDB Atlas  ◄── PRIMARY            │
+      │      • Feature collections                 │
+      │      • Model registry (GridFS artifacts)   │
+      │                                            │
+      │   2. Hopsworks      ◄── SECONDARY          │
+      │      • Feature groups + model registry     │
+      │                                            │
+      │   3. Local models/  ◄── LAST RESORT (read) │
+      └──────┬─────────────────────────────────────┘
              │
              ▼
       ┌──────────────────────────────────────┐
@@ -127,12 +136,12 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 
 | Category | Technologies |
 |----------|-------------|
-| **Language** | Python 3.11+ |
+| **Language** | Python 3.12 |
 | **ML Frameworks** | Scikit-learn, XGBoost, LightGBM, TensorFlow/Keras |
 | **Backend** | FastAPI, Uvicorn |
 | **Frontend** | Streamlit, Plotly |
-| **Feature Store** | Hopsworks (2 separate FGs: historical + forecast) |
-| **Model Registry** | Hopsworks Model Registry |
+| **Feature Store** | **MongoDB Atlas (primary)**, Hopsworks (fallback) |
+| **Model Registry** | **MongoDB + GridFS (primary)**, Hopsworks (fallback) |
 | **Primary Keys** | Time-only (no lat/lon in PKs) |
 | **Automation** | GitHub Actions (hourly + daily) |
 | **APIs** | Open-Meteo (Weather + AQI forecasts, with retry logic) |
@@ -145,10 +154,11 @@ Predict AQI levels for the next 72 hours with 95%+ accuracy using ensemble ML mo
 ## 📦 Installation
 
 ### Prerequisites
-- Python 3.11 or higher
+- Python 3.12
 - Git
-- Hopsworks account (free tier available)
-- Open-Meteo API access (free)
+- **MongoDB Atlas account** (free M0 tier is sufficient) — the primary store
+- Hopsworks account — *optional*, used only as a fallback
+- Open-Meteo API access (free, no key required)
 
 ### 1. Clone Repository
 ```bash
@@ -158,8 +168,8 @@ cd AQI-Predictor
 
 ### 2. Create Virtual Environment
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
 ```
 
 ### 3. Install Dependencies
@@ -168,22 +178,50 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure Environment Variables
-Create a `.env` file in the root directory:
+Copy the template and fill it in:
 
-```env
-# Hopsworks Configuration
-HOPSWORKS_API_KEY=your_hopsworks_api_key
-HOPSWORKS_PROJECT=your_project_name
-
-# Backend API
-API_BASE_URL=http://localhost:8000/api (or your backend server url)
+```bash
+cp .env.example .env
 ```
 
-### 5. Setup Hopsworks
-1. Create account at [Hopsworks.ai](https://www.hopsworks.ai/)
-2. Create new project
-3. Generate API keyw
-4. Add to `.env` file
+Only `MONGODB_URI` is required:
+
+```env
+# --- PRIMARY STORE: MongoDB Atlas ---
+MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority
+MONGO_DB=aqi_predictor
+
+# --- SECONDARY STORE: Hopsworks (optional) ---
+HOPSWORKS_API_KEY=
+HOPSWORKS_PROJECT=
+
+# Backend API
+API_BASE_URL=http://localhost:8000/api
+```
+
+### 5. Setup MongoDB Atlas
+1. Create a free cluster at [mongodb.com/atlas](https://www.mongodb.com/atlas).
+2. **Database Access** — create a user with `readWrite` on `aqi_predictor`.
+3. **Network Access** — allow your IP (use `0.0.0.0/0` for Render/GitHub
+   Actions, whose egress IPs are not fixed).
+4. **Connect → Drivers → Python** — copy the URI into `MONGODB_URI`.
+   Percent-encode special characters in the password (`@` → `%40`).
+
+Collections, GridFS buckets, and indexes are created automatically on first
+write — no manual schema setup.
+
+### Storage priority
+`STORAGE_BACKEND` controls which backends are used:
+
+| Value | Behaviour |
+|-------|-----------|
+| `auto` *(default)* | MongoDB, then Hopsworks, then bundled `models/` |
+| `mongo` | MongoDB only |
+| `hopsworks` | Hopsworks only |
+
+Reads take the first backend that returns data; writes fan out to **every**
+configured backend so both stores stay in sync. Check what is live at
+`GET /api/storage-status`.
 
 ---
 

@@ -2,7 +2,6 @@ __pycache__/
 .cache/
 *.pyc
 .env
-__init__.py
 .cache.*
 
 # Model files (excluded from git, but GitHub Actions artifacts can include them)
@@ -12,3 +11,19 @@ models/*.pkl
 
 
 node_modules/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+src/.env
+
+# Local artifacts
+*.log
+.pytest_cache/
+.ipynb_checkpoints/

@@ -18,7 +18,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-API_BASE_URL = os.getenv("API_BASE_URL")
+# Falls back to a local backend so the dashboard works out of the box.
+API_BASE_URL = (os.getenv("API_BASE_URL") or "http://localhost:8000/api").rstrip("/")
 
 
 st.markdown("""

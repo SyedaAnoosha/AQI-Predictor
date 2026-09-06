@@ -5,12 +5,13 @@ import sys
 import json
 import math
 import pandas as pd
+from typing import Any
 import numpy as np
 from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from src.backend.api_client import get_api_client, _weather_api_with_cache_retry
+from backend.api_client import get_api_client, _weather_api_with_cache_retry
 
 LATITUDE = 25.3792
 LONGITUDE = 68.3683
@@ -57,7 +58,9 @@ def fetch_current_aqi() -> dict:
         params,
     )
 
-    hourly = response.Hourly()
+    hourly: Any = response.Hourly()
+    if hourly is None:
+        raise ValueError("Open-Meteo air-quality response contained no hourly data")
     times = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         periods=len(hourly.Variables(0).ValuesAsNumpy()),
@@ -81,14 +84,23 @@ def fetch_current_aqi() -> dict:
     idx = (df["time"] - current_hour).abs().idxmin()
     row = df.loc[idx]
 
+    def _num(field: str):
+        """Float value for `field`, or None when the reading is missing."""
+        value = row[field]
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        return None if math.isnan(value) else value
+
     return {
         "time": row["time"],
-        "us_aqi": float(row["us_aqi"]) if not math.isnan(row["us_aqi"]) else None,
-        "pm2_5": float(row["pm2_5"]) if not math.isnan(row["pm2_5"]) else None,
-        "pm10": float(row["pm10"]) if not math.isnan(row["pm10"]) else None,
-        "carbon_monoxide": float(row["carbon_monoxide"]) if not math.isnan(row["carbon_monoxide"]) else None,
-        "nitrogen_dioxide": float(row["nitrogen_dioxide"]) if not math.isnan(row["nitrogen_dioxide"]) else None,
-        "sulphur_dioxide": float(row["sulphur_dioxide"]) if not math.isnan(row["sulphur_dioxide"]) else None,
+        "us_aqi": _num("us_aqi"),
+        "pm2_5": _num("pm2_5"),
+        "pm10": _num("pm10"),
+        "carbon_monoxide": _num("carbon_monoxide"),
+        "nitrogen_dioxide": _num("nitrogen_dioxide"),
+        "sulphur_dioxide": _num("sulphur_dioxide"),
     }
 
 def load_predicted_aqi(target_utc: pd.Timestamp) -> dict | None:

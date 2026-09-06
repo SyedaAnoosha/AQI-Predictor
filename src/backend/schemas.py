@@ -17,10 +17,10 @@ class AirQualityDataInput(BaseModel):
     time: datetime
     pm10: float = Field(..., ge=0, description="PM10 concentration (μg/m³)")
     pm2_5: float = Field(..., ge=0, description="PM2.5 concentration (μg/m³)")
-    nitrogen_dioxide: Optional[float] = Field(None, ge=0, description="NO2 concentration")
-    sulphur_dioxide: Optional[float] = Field(None, ge=0, description="SO2 concentration")
+    nitrogen_dioxide: Optional[float] = Field(default=None, ge=0, description="NO2 concentration")
+    sulphur_dioxide: Optional[float] = Field(default=None, ge=0, description="SO2 concentration")
     carbon_monoxide: float = Field(..., ge=0, description="CO concentration")
-    aqi: Optional[float] = Field(None, ge=0, le=500, description="US AQI (may not be present in forecasts)")
+    aqi: Optional[float] = Field(default=None, ge=0, le=500, description="US AQI (may not be present in forecasts)")
 
 
 class ModelFeatureVector(BaseModel):
@@ -95,29 +95,41 @@ class PredictionItem(BaseModel):
     aqi_category: str = Field(..., description="AQI category (Good, Moderate, Unhealthy, etc.)")
     
     weather_context: Optional[Dict[str, float]] = Field(
-        None,
+        default=None,
         description="Weather conditions at prediction time",
-        example={"temperature": 25.3, "humidity": 65.0, "wind_speed": 12.5}
+        # Pydantic v2 spells per-field examples this way; `example=` is v1.
+        json_schema_extra={
+            "example": {"temperature": 25.3, "humidity": 65.0, "wind_speed": 12.5}
+        },
     )
     trend: Optional[str] = Field(
-        None,
-        description="AQI trend: improving, worsening, stable"
+        default=None,
+        description="AQI trend: improving, worsening, stable",
     )
     
 class PredictionResponse(BaseModel):
-    location: str = Field("Hyderabad, Sindh", description="Prediction location")
-    latitude: float = Field(25.3548, description="Location latitude")
-    longitude: float = Field(68.3711, description="Location longitude")
+    location: str = Field(default="Hyderabad, Sindh", description="Prediction location")
+    latitude: float = Field(default=25.3792, description="Location latitude")
+    longitude: float = Field(default=68.3683, description="Location longitude")
     generated_at: datetime = Field(..., description="Timestamp when prediction was generated")
     predictions: List[PredictionItem] = Field(..., description="List of hourly predictions")
-    
+
+    # Summary of the forecast window. These are computed by the service and
+    # were previously dropped because the schema did not declare them.
+    peak_aqi: Optional[float] = Field(default=None, description="Highest predicted AQI in the window")
+    peak_time: Optional[datetime] = Field(default=None, description="Time of the peak prediction")
+    forecast_hours: Optional[int] = Field(default=None, description="Number of hours forecast")
+
     class Config:
         json_schema_extra = {
             "example": {
                 "location": "Hyderabad, Sindh",
-                "latitude": 25.3548,
-                "longitude": 68.3711,
+                "latitude": 25.3792,
+                "longitude": 68.3683,
                 "generated_at": "2026-01-23T14:30:00Z",
+                "peak_aqi": 168.0,
+                "peak_time": "2026-01-24T09:00:00Z",
+                "forecast_hours": 72,
                 "predictions": [
                     {
                         "timestamp": "2026-01-23T15:00:00Z",
@@ -173,18 +185,18 @@ class HistoricalDataItem(BaseModel):
     measured_aqi: float = Field(..., description="Measured US AQI value")
     temperature: float = Field(..., description="Temperature (°C)")
     humidity: float = Field(..., description="Relative humidity (%)")
-    pressure: Optional[float] = Field(None, description="Pressure (hPa)")
+    pressure: Optional[float] = Field(default=None, description="Pressure (hPa)")
     wind_speed: float = Field(..., description="Wind speed (km/h)")
-    wind_direction: Optional[float] = Field(None, description="Wind direction (degrees)")
-    precipitation: Optional[float] = Field(None, description="Precipitation (mm)")
+    wind_direction: Optional[float] = Field(default=None, description="Wind direction (degrees)")
+    precipitation: Optional[float] = Field(default=None, description="Precipitation (mm)")
     
-    pm2_5: Optional[float] = Field(None, description="PM2.5 concentration (μg/m³)")
-    pm10: Optional[float] = Field(None, description="PM10 concentration (μg/m³)")
-    carbon_monoxide: Optional[float] = Field(None, description="CO concentration")
+    pm2_5: Optional[float] = Field(default=None, description="PM2.5 concentration (μg/m³)")
+    pm10: Optional[float] = Field(default=None, description="PM10 concentration (μg/m³)")
+    carbon_monoxide: Optional[float] = Field(default=None, description="CO concentration")
     
-    aqi_category: Optional[str] = Field(None, description="AQI category")
-    is_weekend: Optional[bool] = Field(None, description="Is weekend day")
-    hour_of_day: Optional[int] = Field(None, ge=0, le=23, description="Hour of day")
+    aqi_category: Optional[str] = Field(default=None, description="AQI category")
+    is_weekend: Optional[bool] = Field(default=None, description="Is weekend day")
+    hour_of_day: Optional[int] = Field(default=None, ge=0, le=23, description="Hour of day")
 
 class HistoricalDataResponse(BaseModel):
     location: str = Field("Hyderabad, Sindh", description="Location")
@@ -298,6 +310,9 @@ def get_health_recommendation(aqi_value: float) -> HealthRecommendation:
     category_key = get_aqi_category(aqi_value)
     rec_data = HEALTH_RECOMMENDATIONS[category_key]
     
+    # Default covers AQI values above every defined range (the scale tops at
+    # 500); without it an out-of-range value raised UnboundLocalError.
+    aqi_range = "501+"
     for cat, info in AQI_CATEGORIES.items():
         if info["range"][0] <= aqi_value <= info["range"][1]:
             aqi_range = f"{info['range'][0]}-{info['range'][1]}"
