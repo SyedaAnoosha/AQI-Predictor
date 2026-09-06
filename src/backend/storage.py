@@ -320,7 +320,39 @@ class ModelRegistry:
                 logger.info("Loaded model '%s' from local disk", model_name)
                 return {"path": models_dir, "registry_metrics": {}, "source": "disk"}
 
-        logger.error("Model '%s' not available from any backend", model_name)
+        # Spell out why each tier failed - a bare "not available" gives an
+        # operator nothing to act on when this happens in a deployment.
+        reasons = []
+        if not _mongo_configured():
+            reasons.append("MongoDB: MONGODB_URI/MONGO_URI not set")
+        elif self.store.mongo() is None:
+            reasons.append("MongoDB: configured but unreachable")
+        else:
+            reasons.append(f"MongoDB: connected, but no '{model_name}' in model_registry")
+
+        if not _hopsworks_configured():
+            reasons.append("Hopsworks: HOPSWORKS_API_KEY not set")
+        elif self.store.hopsworks() is None:
+            reasons.append("Hopsworks: configured but unreachable")
+
+        models_dir = self._models_dir()
+        if os.getenv("ALLOW_DISK_FALLBACK", "true").strip().lower() != "true":
+            reasons.append("disk: ALLOW_DISK_FALLBACK is off")
+        elif not os.path.isdir(models_dir):
+            reasons.append(f"disk: {models_dir} does not exist")
+        else:
+            present = sorted(
+                f for f in os.listdir(models_dir) if f.endswith((".pkl", ".keras"))
+            )
+            reasons.append(
+                f"disk: no {model_name}.pkl/.keras in {models_dir} "
+                f"(found: {present or 'nothing'})"
+            )
+
+        logger.error(
+            "Model '%s' not available from any backend. %s",
+            model_name, " | ".join(reasons),
+        )
         return None
 
     def publish(
