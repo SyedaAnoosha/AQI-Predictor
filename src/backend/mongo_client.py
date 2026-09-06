@@ -60,7 +60,26 @@ def connect_mongo(
         raise ValueError("MONGODB_URI (or MONGO_URI) is not set")
 
     db_name = db_name or os.getenv("MONGO_DB") or DEFAULT_DB_NAME
-    client = MongoClient(uri, serverSelectionTimeoutMS=10_000, tz_aware=False)
+
+    options: Dict[str, Any] = {
+        "serverSelectionTimeoutMS": int(os.getenv("MONGO_TIMEOUT_MS", "20000")),
+        "tz_aware": False,
+        "retryWrites": True,
+    }
+
+    # Atlas requires TLS. Some hosts (Render's image among them) ship a CA
+    # store the driver cannot use, which surfaces as
+    # "TLSV1_ALERT_INTERNAL_ERROR" during the handshake. Pointing pymongo at
+    # certifi's bundle gives it a CA set that is always present and current.
+    if uri.startswith("mongodb+srv://") or "tls=true" in uri or "ssl=true" in uri:
+        try:
+            import certifi
+
+            options["tlsCAFile"] = certifi.where()
+        except ImportError:
+            logger.warning("certifi is not installed; using the system CA store")
+
+    client = MongoClient(uri, **options)
     client.admin.command("ping")
     db = client[db_name]
 

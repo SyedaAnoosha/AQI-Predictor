@@ -26,6 +26,10 @@ plotly>=5.10.0
 hopsworks[python]==4.2.*
 sqlalchemy<=1.4.48
 pymongo>=4.6.0
+# certifi: Atlas TLS handshakes fail on hosts with an unusable system CA store.
+# dnspython: required for mongodb+srv:// SRV record lookups.
+certifi>=2024.2.2
+dnspython>=2.6.0
 # Testing
 pytest>=7.4.0
 mongomock>=4.1.2
